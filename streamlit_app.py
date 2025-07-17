@@ -18,7 +18,7 @@ st.sidebar.header("Upload de Arquivos")
 kml_file = st.sidebar.file_uploader("📂 Upload KML", type=['kml'])
 xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=['xlsx', 'xls'])
 
-# CSS para design minimalista com blocos destacados
+# CSS para design minimalista com blocos destacados e gráfico responsivo
 st.markdown("""
     <style>
     body {
@@ -51,6 +51,8 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         padding: 15px;
         margin-bottom: 15px;
+        width: 100%;
+        height: auto;
     }
     .stMarkdown h3 {
         color: #333333;
@@ -264,7 +266,7 @@ if kml_file and xlsx_file:
         
         with col2:
             st.markdown("### Distribuição de Distâncias por Especialista")
-            dist_chart_data = resultados[resultados['GESTOR'] == gestor_selecionado][['ESPECIALISTA', 'DIST_MAX']].set_index('ESPECIALISTA')['DIST_MAX'].sort_values(ascending=False)
+            dist_chart_data = resultados[resultados['GESTOR'] == gestor_selecionado][['ESPECIALISTA', 'DIST_MAX']].set_index('ESPECIALISTA')['DIST_MAX'].sort_values(ascending=False).head(5)  # Limitar a 5 principais
             if not dist_chart_data.empty:
                 st.markdown('<div class="chart-container">', unsafe_allow_html=True)
                 st.bar_chart(dist_chart_data, color='#2196F3')
@@ -347,7 +349,7 @@ if kml_file and xlsx_file:
             ).add_to(marker_cluster)
 
             # Verificar e adicionar geometrias válidas
-            if row['GEOMETRIES'] and any(row['GEOMETRIES']):
+            if isinstance(row['GEOMETRIES'], list) and row['GEOMETRIES'] and any(g is not None and not g.is_empty for g in row['GEOMETRIES']):
                 for geom in row['GEOMETRIES']:
                     if geom is not None and not geom.is_empty:
                         folium.GeoJson(
