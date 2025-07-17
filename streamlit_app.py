@@ -265,11 +265,12 @@ if kml_file and xlsx_file:
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
         
         with col2:
-            st.markdown("### Distribuição de Distâncias por Especialista")
-            dist_chart_data = resultados[resultados['GESTOR'] == gestor_selecionado][['ESPECIALISTA', 'DIST_MAX']].set_index('ESPECIALISTA')['DIST_MAX'].sort_values(ascending=False).head(5)  # Limitar a 5 principais
-            if not dist_chart_data.empty:
+            st.markdown("### Unidades Atendidas por Especialista")
+            # Contar o número de unidades por especialista
+            unit_count = resultados[resultados['GESTOR'] == gestor_selecionado].groupby('ESPECIALISTA')['UNIDADES_ATENDIDAS'].apply(len).sort_values(ascending=False).head(5)
+            if not unit_count.empty:
                 st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                st.bar_chart(dist_chart_data, color='#2196F3')
+                st.bar_chart(unit_count, color='#2196F3')
                 st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.warning("Nenhum dado disponível para o gestor selecionado.")
