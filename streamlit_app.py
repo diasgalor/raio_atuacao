@@ -10,9 +10,6 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 
-# Configuração da página (PRIMEIRA INSTRUÇÃO)
-st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
-
 # Exibir importações na sidebar
 st.sidebar.title("Importações")
 st.sidebar.code("""
@@ -28,6 +25,9 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 """)
+
+# Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
+st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # CSS para design minimalista com blocos destacados
 st.markdown("""
@@ -196,7 +196,7 @@ if kml_file and xlsx_file:
             df_analistas['COORDENADAS_CIDADE'] = df_analistas['COORDENADAS_CIDADE'].str.lstrip("'")
             df_analistas[['LAT', 'LON']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
         except Exception as e:
-            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude,longitude' ou '\'latitude,longitude'.")
+            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude,longitude' ou '\'latitude,longitude'.") 
             st.stop()
 
         df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(normalize_str)
@@ -247,7 +247,7 @@ if kml_file and xlsx_file:
                     lon = df_unidade['Longitude'].iloc[0]
                     dist = haversine(base_coords['LON'], base_coords['LAT'], lon, lat)
                     distancias.append((unidade, dist))
-                    geometries.extend(df_unidade['geometry'].dropna().tolist())
+                    geometries.extend(df_unidade['geometry'].dropna())
 
             medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
             max_dist = max([d[1] for d in distancias]) if distancias else 0
@@ -262,7 +262,7 @@ if kml_file and xlsx_file:
                 'DIST_MEDIA': round(medias, 1),
                 'DIST_MAX': round(max_dist, 1),
                 'DETALHES': distancias,
-                'GEOMETRIES': geometries if geometries else None
+                'GEOMETRIES': geometries
             })
 
         resultados = pd.DataFrame(resultados)
@@ -300,8 +300,7 @@ if kml_file and xlsx_file:
                 for _, row in df_final.iterrows():
                     unidades.extend(row['UNIDADES_ATENDIDAS'])
                     distancias.extend(row['DETALHES'])
-                    if row['GEOMETRIES'] is not None:
-                        geometries.extend(row['GEOMETRIES'])
+                    geometries.extend(row['GEOMETRIES'])
                     lats.append(row['LAT'])
                     lons.append(row['LON'])
 
@@ -322,7 +321,7 @@ if kml_file and xlsx_file:
                     'DIST_MEDIA': round(medias, 1),
                     'DIST_MAX': round(max_dist, 1),
                     'DETALHES': distancias,
-                    'GEOMETRIES': geometries if geometries else None
+                    'GEOMETRIES': geometries
                 }
             else:
                 consolidated_data = None
@@ -344,6 +343,11 @@ if kml_file and xlsx_file:
                 detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
                 st.table(detalhes_df)
 
+                # Gráfico de barras das distâncias das unidades
+                st.markdown("**Maiores Distâncias:**")
+                chart_data = detalhes_df.set_index('Unidade')['Distância (km)']
+                st.bar_chart(chart_data, color='#2196F3')
+
             # Criação do mapa
             m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
             marker_cluster = MarkerCluster().add_to(m)
@@ -361,14 +365,11 @@ if kml_file and xlsx_file:
                 icon=folium.Icon(color='blue', icon='user')
             ).add_to(marker_cluster)
 
-            # Verificar e adicionar geometrias válidas
-            if row['GEOMETRIES'] and any(row['GEOMETRIES']):
-                for geom in row['GEOMETRIES']:
-                    if geom is not None and not geom.is_empty:
-                        folium.GeoJson(
-                            geom,
-                            style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
-                        ).add_to(m)
+            for geom in row['GEOMETRIES']:
+                folium.GeoJson(
+                    geom,
+                    style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
+                ).add_to(m)
 
             folium.Circle(
                 location=[row['LAT'], row['LON']],
