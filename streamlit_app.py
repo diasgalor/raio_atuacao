@@ -49,8 +49,8 @@ st.markdown("""
         border: 2px solid #2196F3;
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        padding: 15px;
-        margin-bottom: 0px; /* Remover margem inferior para evitar espaço vazio */
+        padding: 0; /* Remover padding para evitar espaço extra */
+        margin: 0; /* Remover margem para evitar espaço extra */
         width: 100%;
         height: auto;
     }
@@ -275,14 +275,14 @@ if kml_file and xlsx_file:
                     for unidade, distancia in row['DETALHES']:
                         df_plot = pd.concat([df_plot, pd.DataFrame({
                             'Unidade': [unidade],
-                            'Distância (km)': [round(distancia)],  # Remover casas decimais
+                            'Distância (km)': [round(distancia)],
                             'Especialista': [row['ESPECIALISTA']]
                         })])
                 
                 if not df_plot.empty:
                     df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                    with st.expander("Gráfico de Distâncias", expanded=True):  # Card para o gráfico
-                        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    with st.expander("Gráfico de Distâncias", expanded=True):
+                        st.markdown('<div class="chart-container" style="padding: 0; margin: 0; border: none;">', unsafe_allow_html=True)
                         st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
                         st.markdown('</div>', unsafe_allow_html=True)
                 else:
@@ -296,10 +296,10 @@ if kml_file and xlsx_file:
                 
                 if not df_especialista.empty:
                     df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
-                    df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)  # Remover casas decimais
+                    df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
                     df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                    with st.expander("Gráfico de Distâncias", expanded=True):  # Card para o gráfico
-                        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    with st.expander("Gráfico de Distâncias", expanded=True):
+                        st.markdown('<div class="chart-container" style="padding: 0; margin: 0; border: none;">', unsafe_allow_html=True)
                         st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
                         st.markdown('</div>', unsafe_allow_html=True)
                 else:
