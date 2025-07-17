@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
+from shapely.ops import unary_union
 import folium
 from folium.plugins import MarkerCluster
 import math
@@ -63,7 +64,7 @@ def extrair_dados_kml(kml_content):
     try:
         tree = ET.fromstring(kml_content)
         ns = {'kml': 'http://www.opengis.net/kml/2.2'}
-        dados = []
+        dados = {}
         for placemark in tree.findall('.//kml:Placemark', ns):
             props = {}
             name_elem = placemark.find('kml:name', ns)
@@ -77,7 +78,8 @@ def extrair_dados_kml(kml_content):
                 coords_text = polygon_elem.text.strip()
                 coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
                 try:
-                    geometry = gpd.GeoSeries([Point(c[0], c[1]) for c in coords]).unary_union.convex_hull
+                    from shapely.geometry import Polygon
+                    geometry = Polygon([(c[0], c[1]) for c in coords])
                 except Exception as geom_e:
                     st.warning(f"Erro ao criar geometria para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")
                     geometry = None
@@ -87,7 +89,8 @@ def extrair_dados_kml(kml_content):
                 coords_text = line_elem.text.strip()
                 coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
                 try:
-                    geometry = gpd.GeoSeries([Point(c[0], c[1]) for c in coords]).unary_union
+                    from shapely.geometry import LineString
+                    geometry = LineString([(c[0], c[1]) for c in coords])
                 except Exception as geom_e:
                     st.warning(f"Erro ao criar geometria para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")
                     geometry = None
@@ -103,13 +106,31 @@ def extrair_dados_kml(kml_content):
                     geometry = None
 
             if geometry:
-                dados.append({**props, 'geometry': geometry})
+                unidade = props.get('NOME_FAZ', props.get('Name', 'Sem Nome'))
+                if unidade in dados:
+                    dados[unidade]['geometries'].append(geometry)
+                    dados[unidade]['props'].update(props)
+                else:
+                    dados[unidade] = {'geometries': [geometry], 'props': props}
 
         if not dados:
             st.warning("Nenhuma geometria válida encontrada no KML.")
             return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
 
-        gdf = gpd.GeoDataFrame(dados, crs="EPSG:4326")
+        # Consolidar geometrias por unidade
+        dados_gdf = []
+        for unidade, info in dados.items():
+            try:
+                consolidated_geometry = unary_union(info['geometries'])
+                dados_gdf.append({
+                    **info['props'],
+                    'Name': unidade,
+                    'geometry': consolidated_geometry
+                })
+            except Exception as e:
+                st.warning(f"Erro ao consolidar geometria para unidade {unidade}: {e}")
+
+        gdf = gpd.GeoDataFrame(dados_gdf, crs="EPSG:4326")
         return gdf
 
     except Exception as e:
@@ -187,8 +208,16 @@ if kml_file and xlsx_file:
             c = 2 * math.asin(math.sqrt(a))
             return R * c
 
+        # Agrupar unidades no Excel por especialista
+        df_analistas = df_analistas.groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON'])['UNIDADE_normalized'].apply(set).reset_index()
+        df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE_normalized'].apply(list)
+
         # Junta coordenadas da unidade
-        df_merge = df_analistas.merge(gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude', 'geometry']], left_on='UNIDADE_normalized', right_on='UNIDADE_normalized', how='left')
+        df_merge = df_analistas.explode('UNIDADE_normalized').merge(
+            gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude', 'geometry']],
+            on='UNIDADE_normalized',
+            how='left'
+        )
         df_merge = df_merge.dropna(subset=['Latitude', 'Longitude'])
 
         # Agrupa por especialista
@@ -196,16 +225,18 @@ if kml_file and xlsx_file:
         for (gestor, esp), df_sub in df_merge.groupby(['GESTOR', 'ESPECIALISTA']):
             cidade_base = df_sub['CIDADE_BASE'].iloc[0]
             base_coords = df_sub[['LAT', 'LON']].iloc[0]
-            unidades = []
+            unidades = list(set(df_sub['UNIDADE_normalized'].dropna()))
             distancias = []
             geometries = []
 
-            for _, row in df_sub.iterrows():
-                unidades.append(row['UNIDADE'])
-                dist = haversine(base_coords['LON'], base_coords['LAT'], row['Longitude'], row['Latitude'])
-                distancias.append((row['UNIDADE'], dist))
-                if row['geometry'] is not None:
-                    geometries.append(row['geometry'])
+            for unidade in unidades:
+                df_unidade = df_sub[df_sub['UNIDADE_normalized'] == unidade]
+                if not df_unidade.empty:
+                    lat = df_unidade['Latitude'].iloc[0]
+                    lon = df_unidade['Longitude'].iloc[0]
+                    dist = haversine(base_coords['LON'], base_coords['LAT'], lon, lat)
+                    distancias.append((unidade, dist))
+                    geometries.extend(df_unidade['geometry'].dropna())
 
             medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
             max_dist = max([d[1] for d in distancias]) if distancias else 0
