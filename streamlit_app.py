@@ -5,6 +5,7 @@ import folium
 from folium.plugins import MarkerCluster
 import math
 import pandas as pd
+import numpy as np
 from streamlit_folium import st_folium
 
 # Configuração da página
@@ -27,17 +28,17 @@ if uploaded_kml and uploaded_table:
         # Ler a tabela de analistas (Excel)
         df_analistas = pd.read_excel(uploaded_table)
 
-        # Verificar se as colunas esperadas estão presentes
+        # Verificar colunas esperadas
         expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE']
         if not all(col in df_analistas.columns for col in expected_columns):
             st.error("O arquivo Excel deve conter as colunas: GESTOR, ESPECIALISTA, CIDADE_BASE, UNIDADE, COORDENADAS_CIDADE")
             st.stop()
 
-        # Dividir a coluna COORDENADAS_CIDADE em Latitude e Longitude
+        # Dividir COORDENADAS_CIDADE em Latitude e Longitude
         try:
             df_analistas[['Latitude', 'Longitude']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
         except Exception as e:
-            st.error("Erro ao processar a coluna COORDENADAS_CIDADE. Certifique-se de que está no formato 'latitude, longitude'.")
+            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude, longitude'.")
             st.stop()
 
         # Função de distância haversine (em km)
@@ -66,30 +67,35 @@ if uploaded_kml and uploaded_table:
         for idx, row in df_analistas.iterrows():
             especialista = row['ESPECIALISTA']
             cidade_base = row['CIDADE_BASE']
-            # Suporta múltiplas unidades separadas por vírgula
             unidades = row['UNIDADE'].split(',') if ',' in row['UNIDADE'] else [row['UNIDADE']]
             lat = row['Latitude']
             lon = row['Longitude']
 
-            # Calcular distâncias e raios para cada unidade
+            # Criar ponto para o analista
+            ponto_analista = Point(lon, lat)
+
+            # Calcular distâncias e raios
             popup_text = f"<b>Especialista:</b> {especialista}<br><b>Cidade Base:</b> {cidade_base}<br>"
-            max_raio_km = 0  # Raio total (máximo das distâncias)
+            max_raio_km = 0
 
             for unidade in unidades:
                 unidade = unidade.strip()
                 gdf_unidade = gdf[gdf['Name'] == unidade]
-ferrer
                 if not gdf_unidade.empty:
                     centroide = gdf_unidade.iloc[0]['centroide']
                     dist_km = haversine(lon, lat, centroide.x, centroide.y)
-                    # Usar a distância como raio de atuação (ajuste conforme necessário)
-                    raio_km = dist_km  # Pode substituir por valor fixo ou coluna específica
-                    max_raio_km = max(max_raio_km, raio_km)  # Usa o maior raio
+                    raio_km = dist_km  # Raio baseado na distância (ajuste se necessário)
+                    max_raio_km = max(max_raio_km, raio_km)
                     popup_text += f"<b>Unidade {unidade}:</b> Distância ao centro: {dist_km:.2f} km<br>"
+
+                    # Verificar se o analista está dentro do polígono da unidade
+                    geom_mask = gdf_unidade.geometry.values[0]
+                    is_within = geom_mask.contains(ponto_analista)
+                    popup_text += f"<b>Dentro de {unidade}?</b> {'Sim' if is_within else 'Não'}<br>"
 
                     # Adicionar limites da unidade ao mapa
                     folium.GeoJson(
-                        gdf_unidade.geometry.values[0],
+                        geom_mask,
                         tooltip=unidade,
                         style_function=lambda x: {'fillColor': 'green', 'color': 'green', 'fillOpacity': 0.1}
                     ).add_to(m)
@@ -97,7 +103,7 @@ ferrer
                     popup_text += f"<b>Unidade {unidade}:</b> Não encontrada no KML<br>"
                     st.warning(f"Unidade {unidade} não encontrada no KML.")
 
-            # Adicionar círculo de raio de atuação (usando o maior raio)
+            # Adicionar círculo de raio de atuação
             folium.Circle(
                 location=[lat, lon],
                 radius=max_raio_km * 1000,  # Converter km para metros
