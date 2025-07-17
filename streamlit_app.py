@@ -10,7 +10,25 @@ import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 import random
 
+# Configurações básicas
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+
+# CSS simples para design minimalista
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: #f5f5f5;
+        border-radius: 8px;
+        padding: 10px 20px;
+        margin-bottom: 10px;
+    }
+    .stTabs [role="tablist"] button[aria-selected="true"] {
+        background-color: #007acc !important;
+        color: white !important;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 def extrair_dados_kml(kml_content):
     try:
@@ -74,7 +92,7 @@ def haversine(lon1, lat1, lon2, lat2):
 
 def gerar_cor_unica(lista_unidades):
     cores = []
-    random.seed(42)  # Para cores consistentes entre execuções
+    random.seed(42)  # cores consistentes
     for _ in range(len(lista_unidades)):
         r = random.randint(100, 200)
         g = random.randint(100, 200)
@@ -130,107 +148,105 @@ if uploaded_kml and uploaded_table:
         m = folium.Map(location=centro_mapa, zoom_start=6)
         marker_cluster = MarkerCluster().add_to(m)
 
-        # Gerar cores únicas para todas as unidades
         todas_unidades = list(set([u for sublist in df_analistas['UNIDADE_normalized'].str.split(',').explode() for u in sublist]))
         cores_unidades = gerar_cor_unica(todas_unidades)
 
-        # Seleção múltipla de especialistas para filtro
-        especialistas_all = sorted(df_analistas['ESPECIALISTA'].unique())
-        selecionados = st.multiselect("Selecione um ou mais especialistas para exibir (ou deixe vazio para todos)", especialistas_all)
+        # Agrupar especialistas (sem duplicação)
+        df_agrupado = (
+            df_analistas.groupby(
+                ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'Latitude', 'Longitude'], dropna=False
+            )['UNIDADE_normalized']
+            .apply(lambda x: ','.join(sorted(set([u.strip() for sublist in x.str.split(',') for u in sublist]))))
+            .reset_index()
+        )
 
-        # Agrupar df_analistas por GESTOR, ESPECIALISTA, CIDADE_BASE, Latitude, Longitude,
-        # agregando as UNIDADES numa lista única por especialista
-        try:
-            df_agrupado = (
-                df_analistas.groupby(
-                    ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'Latitude', 'Longitude'], dropna=False
-                )['UNIDADE_normalized']
-                .apply(lambda x: ','.join(sorted(set([u.strip() for sublist in x.str.split(',') for u in sublist]))))
-                .reset_index()
-            )
-        except Exception as e:
-            st.error(f"Erro na agregação dos especialistas: {e}")
-            df_agrupado = pd.DataFrame()  # vazio para evitar erro posterior
+        # Filtros laterais para gestores e especialistas
+        gestores_disponiveis = sorted(df_agrupado['GESTOR'].unique())
+        gestor_selecionado = st.sidebar.selectbox("Selecione o Gestor", gestores_disponiveis)
 
-        # Filtrar especialistas selecionados se houver filtro
-        if selecionados:
-            df_agrupado = df_agrupado[df_agrupado['ESPECIALISTA'].isin(selecionados)]
+        df_gestor = df_agrupado[df_agrupado['GESTOR'] == gestor_selecionado]
 
-        st.subheader("Resumo e Detalhes por Gestor e Especialista")
+        especialistas_disponiveis = sorted(df_gestor['ESPECIALISTA'].unique())
+        especialistas_selecionados = st.sidebar.multiselect(
+            "Selecione Especialista(s) (ou deixe vazio para todos)", especialistas_disponiveis, default=especialistas_disponiveis
+        )
 
-        for gestor in sorted(df_agrupado['GESTOR'].unique()):
-            with st.expander(f"Gestor: {gestor}"):
-                df_gestor = df_agrupado[df_agrupado['GESTOR'] == gestor]
-                
-                # Número de especialistas
-                st.write(f"**Número de Especialistas:** {len(df_gestor)}")
-                
-                for _, row in df_gestor.iterrows():
-                    especialista = row['ESPECIALISTA']
-                    cidade_base = row['CIDADE_BASE']
-                    lat, lon = row['Latitude'], row['Longitude']
-                    unidades = [u.strip() for u in row['UNIDADE_normalized'].split(',')]
+        if especialistas_selecionados:
+            df_gestor = df_gestor[df_gestor['ESPECIALISTA'].isin(especialistas_selecionados)]
 
-                    distancias_unidades = []
-                    for unidade in unidades:
-                        gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
-                        if not gdf_unidade.empty:
-                            centroide = gdf_unidade.iloc[0]['centroide']
-                            dist_km = haversine(lon, lat, centroide.x, centroide.y)
-                            distancias_unidades.append((unidade, dist_km))
-                    
-                    with st.expander(f"Especialista: {especialista} (Cidade Base: {cidade_base})"):
-                        cols = st.columns(3)
-                        cols[0].metric("Unidades Atendidas", len(unidades))
-                        if distancias_unidades:
-                            media = sum(d[1] for d in distancias_unidades) / len(distancias_unidades)
-                            max_dist = max(d[1] for d in distancias_unidades)
-                            cols[1].metric("Distância Média (km)", f"{media:.1f}")
-                            cols[2].metric("Distância Máxima (km)", f"{max_dist:.1f}")
-                        
-                        df_dist = pd.DataFrame(distancias_unidades, columns=['Unidade', 'Distância (km)'])
-                        st.table(df_dist.style.format({'Distância (km)': '{:.2f}'}))
+        st.subheader(f"Resumo e Detalhes - Gestor: {gestor_selecionado}")
 
-                        # Adicionar linhas e círculos no mapa para este especialista
-                        for unidade, dist_km in distancias_unidades:
-                            gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
-                            if gdf_unidade.empty:
-                                continue
-                            centroide = gdf_unidade.iloc[0]['centroide']
-                            folium.PolyLine(
-                                locations=[[lat, lon], [centroide.y, centroide.x]],
-                                color=cores_unidades.get(unidade, '#000000'),
-                                weight=2,
-                                opacity=0.7,
-                                tooltip=f"{especialista} → {unidade}: {dist_km:.1f} km"
-                            ).add_to(m)
-                            folium.Circle(
-                                location=[lat, lon],
-                                radius=dist_km*1000,
-                                color=cores_unidades.get(unidade, '#000000'),
-                                fill=True,
-                                fill_opacity=0.1,
-                                tooltip=f"Raio para {unidade}: {dist_km:.1f} km"
-                            ).add_to(m)
-                            folium.GeoJson(
-                                gdf_unidade.geometry.values[0],
-                                tooltip=unidade,
-                                style_function=lambda x, cor=cores_unidades.get(unidade, '#000000'): {
-                                    'fillColor': cor,
-                                    'color': cor,
-                                    'fillOpacity': 0.2
-                                }
-                            ).add_to(m)
+        # Mostrar número de especialistas
+        st.markdown(f"**Número de Especialistas:** {len(df_gestor)}")
 
-                    # Marcador do especialista
-                    folium.Marker(
-                        [lat, lon],
-                        popup=f"<b>{especialista}</b><br>Cidade Base: {cidade_base}",
-                        tooltip=especialista,
-                        icon=folium.Icon(color='blue', icon='user')
-                    ).add_to(marker_cluster)
+        # Criar tabs para especialistas
+        tabs = st.tabs(df_gestor['ESPECIALISTA'].tolist())
 
-        # Legenda no mapa
+        for tab, (_, row) in zip(tabs, df_gestor.iterrows()):
+            with tab:
+                especialista = row['ESPECIALISTA']
+                cidade_base = row['CIDADE_BASE']
+                lat, lon = row['Latitude'], row['Longitude']
+                unidades = [u.strip() for u in row['UNIDADE_normalized'].split(',')]
+
+                distancias_unidades = []
+                for unidade in unidades:
+                    gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
+                    if not gdf_unidade.empty:
+                        centroide = gdf_unidade.iloc[0]['centroide']
+                        dist_km = haversine(lon, lat, centroide.x, centroide.y)
+                        distancias_unidades.append((unidade, dist_km))
+
+                cols = st.columns(3)
+                cols[0].metric("Unidades Atendidas", len(unidades))
+                if distancias_unidades:
+                    media = sum(d[1] for d in distancias_unidades) / len(distancias_unidades)
+                    max_dist = max(d[1] for d in distancias_unidades)
+                    cols[1].metric("Distância Média (km)", f"{media:.1f}")
+                    cols[2].metric("Distância Máxima (km)", f"{max_dist:.1f}")
+
+                df_dist = pd.DataFrame(distancias_unidades, columns=['Unidade', 'Distância (km)'])
+                st.table(df_dist.style.format({'Distância (km)': '{:.2f}'}))
+
+                # Adicionar no mapa linhas e círculos para o especialista
+                for unidade, dist_km in distancias_unidades:
+                    gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
+                    if gdf_unidade.empty:
+                        continue
+                    centroide = gdf_unidade.iloc[0]['centroide']
+                    folium.PolyLine(
+                        locations=[[lat, lon], [centroide.y, centroide.x]],
+                        color=cores_unidades.get(unidade, '#000000'),
+                        weight=2,
+                        opacity=0.7,
+                        tooltip=f"{especialista} → {unidade}: {dist_km:.1f} km"
+                    ).add_to(m)
+                    folium.Circle(
+                        location=[lat, lon],
+                        radius=dist_km * 1000,
+                        color=cores_unidades.get(unidade, '#000000'),
+                        fill=True,
+                        fill_opacity=0.1,
+                        tooltip=f"Raio para {unidade}: {dist_km:.1f} km"
+                    ).add_to(m)
+                    folium.GeoJson(
+                        gdf_unidade.geometry.values[0],
+                        tooltip=unidade,
+                        style_function=lambda x, cor=cores_unidades.get(unidade, '#000000'): {
+                            'fillColor': cor,
+                            'color': cor,
+                            'fillOpacity': 0.2
+                        }
+                    ).add_to(m)
+
+                folium.Marker(
+                    [lat, lon],
+                    popup=f"<b>{especialista}</b><br>Cidade Base: {cidade_base}",
+                    tooltip=especialista,
+                    icon=folium.Icon(color='blue', icon='user')
+                ).add_to(marker_cluster)
+
+        # Legenda das cores
         legend_html = '''
             <div style="position: fixed; 
                         bottom: 50px; left: 50px; width: 180px; height: auto;
@@ -239,12 +255,10 @@ if uploaded_kml and uploaded_table:
                         padding: 10px;">
                 <b>Legenda de Unidades</b><br>
         '''
-        for unidade, cor in list(cores_unidades.items())[:10]:  # mostra só as primeiras 10 para não poluir
+        for unidade, cor in list(cores_unidades.items())[:10]:
             legend_html += f'<i class="fa fa-square" style="color:{cor}"></i> {unidade[:15]}...<br>'
-        
         if len(cores_unidades) > 10:
             legend_html += f'<i>+ {len(cores_unidades)-10} outras unidades</i>'
-        
         legend_html += '</div>'
         m.get_root().html.add_child(folium.Element(legend_html))
 
@@ -252,7 +266,7 @@ if uploaded_kml and uploaded_table:
         st_folium(m, width=1200, height=800)
 
     except Exception as e:
-        st.error(f"Erro ao processar os arquivos: {str(e)}")
+        st.error(f"Erro ao processar os arquivos: {e}")
 
 else:
     st.info("Por favor, faça upload do arquivo KML e da tabela de analistas (Excel) para começar.")
