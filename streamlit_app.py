@@ -9,10 +9,14 @@ import math
 from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
-import plotly.express as px
 
-# Configuração da página
+# Configuração da página (PRIMEIRA INSTRUÇÃO)
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+
+# Upload de arquivos na sidebar
+st.sidebar.header("Upload de Arquivos")
+kml_file = st.sidebar.file_uploader("📂 Upload KML", type=['kml'])
+xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=['xlsx', 'xls'])
 
 # CSS para design minimalista com blocos destacados
 st.markdown("""
@@ -25,12 +29,20 @@ st.markdown("""
         max-width: 1200px;
         margin: 0 auto;
     }
-    .stSelectbox, .stFileUploader {
+    .stSelectbox {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
         border-radius: 5px;
         padding: 10px;
         box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .stExpander {
+        background-color: #fafafa;
+        border: 2px solid #2196F3;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        margin-bottom: 15px;
+        padding: 15px;
     }
     .chart-container {
         background-color: #ffffff;
@@ -40,44 +52,23 @@ st.markdown("""
         padding: 15px;
         margin-bottom: 15px;
     }
+    .stMarkdown h3 {
+        color: #333333;
+        font-size: 18px;
+        margin-bottom: 10px;
+    }
+    .stButton>button {
+        background-color: #e0e0e0;
+        color: #333333;
+        border: none;
+        border-radius: 5px;
+        padding: 8px 16px;
+    }
+    .stButton>button:hover {
+        background-color: #d0d0d0;
+    }
     </style>
 """, unsafe_allow_html=True)
-
-# Sidebar: Uploads de arquivos
-st.sidebar.title("📁 Importar arquivos")
-
-uploaded_excel = st.sidebar.file_uploader("Planilha com analistas e unidades (.xlsx)", type="xlsx")
-uploaded_kml = st.sidebar.file_uploader("Arquivo de mapa KML (.kml)", type="kml")
-
-# Título principal
-st.title("📍 Raio de Atuação dos Analistas")
-st.markdown("Selecione um gestor e especialista (ou 'Todos') para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa.", unsafe_allow_html=True)
-
-# Exemplo de leitura e gráfico reativo sem duplicação:
-if uploaded_excel:
-    df = pd.read_excel(uploaded_excel)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        gestor_selecionado = st.selectbox("Selecionar Gestor", options=["Todos"] + sorted(df["GESTOR"].dropna().unique().tolist()))
-    with col2:
-        especialista_selecionado = st.selectbox("Selecionar Especialista", options=["Todos"] + sorted(df["ESPECIALISTA"].dropna().unique().tolist()))
-
-    # Filtro da tabela com base nas seleções
-    df_filtrado = df.copy()
-    if gestor_selecionado != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["GESTOR"] == gestor_selecionado]
-    if especialista_selecionado != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["ESPECIALISTA"] == especialista_selecionado]
-
-    # Gráfico: quantidade de unidades por especialista (sem duplicar bloco)
-    if not df_filtrado.empty:
-        with st.container():
-            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
-            st.subheader("📊 Unidades por Especialista")
-            grafico = px.histogram(df_filtrado, x="ESPECIALISTA", color="UNIDADE", barmode="group", text_auto=True)
-            st.plotly_chart(grafico, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
 
 # Título e descrição
 st.title("📍 Raio de Atuação dos Analistas")
@@ -165,10 +156,6 @@ def extrair_dados_kml(kml_content):
 def normalize_str(s):
     return unidecode(str(s).strip().upper())
 
-# Upload de arquivos
-kml_file = st.file_uploader("📂 Upload KML", type=['kml'])
-xlsx_file = st.file_uploader("📊 Upload Excel", type=['xlsx', 'xls'])
-
 if kml_file and xlsx_file:
     try:
         # Leitura do KML
@@ -194,7 +181,7 @@ if kml_file and xlsx_file:
             df_analistas['COORDENADAS_CIDADE'] = df_analistas['COORDENADAS_CIDADE'].str.lstrip("'")
             df_analistas[['LAT', 'LON']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
         except Exception as e:
-            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude,longitude' ou '\'latitude,longitude'.") 
+            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude,longitude' ou '\'latitude,longitude'.")
             st.stop()
 
         df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(normalize_str)
@@ -245,7 +232,7 @@ if kml_file and xlsx_file:
                     lon = df_unidade['Longitude'].iloc[0]
                     dist = haversine(base_coords['LON'], base_coords['LAT'], lon, lat)
                     distancias.append((unidade, dist))
-                    geometries.extend(df_unidade['geometry'].dropna())
+                    geometries.extend(df_unidade['geometry'].dropna().tolist())
 
             medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
             max_dist = max([d[1] for d in distancias]) if distancias else 0
@@ -260,7 +247,7 @@ if kml_file and xlsx_file:
                 'DIST_MEDIA': round(medias, 1),
                 'DIST_MAX': round(max_dist, 1),
                 'DETALHES': distancias,
-                'GEOMETRIES': geometries
+                'GEOMETRIES': geometries if geometries else None
             })
 
         resultados = pd.DataFrame(resultados)
@@ -298,7 +285,8 @@ if kml_file and xlsx_file:
                 for _, row in df_final.iterrows():
                     unidades.extend(row['UNIDADES_ATENDIDAS'])
                     distancias.extend(row['DETALHES'])
-                    geometries.extend(row['GEOMETRIES'])
+                    if row['GEOMETRIES'] is not None:
+                        geometries.extend(row['GEOMETRIES'])
                     lats.append(row['LAT'])
                     lons.append(row['LON'])
 
@@ -319,7 +307,7 @@ if kml_file and xlsx_file:
                     'DIST_MEDIA': round(medias, 1),
                     'DIST_MAX': round(max_dist, 1),
                     'DETALHES': distancias,
-                    'GEOMETRIES': geometries
+                    'GEOMETRIES': geometries if geometries else None
                 }
             else:
                 consolidated_data = None
@@ -341,11 +329,6 @@ if kml_file and xlsx_file:
                 detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
                 st.table(detalhes_df)
 
-                # Gráfico de barras das distâncias das unidades
-                st.markdown("**Maiores Distâncias:**")
-                chart_data = detalhes_df.set_index('Unidade')['Distância (km)']
-                st.bar_chart(chart_data, color='#2196F3')
-
             # Criação do mapa
             m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
             marker_cluster = MarkerCluster().add_to(m)
@@ -363,11 +346,14 @@ if kml_file and xlsx_file:
                 icon=folium.Icon(color='blue', icon='user')
             ).add_to(marker_cluster)
 
-            for geom in row['GEOMETRIES']:
-                folium.GeoJson(
-                    geom,
-                    style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
-                ).add_to(m)
+            # Verificar e adicionar geometrias válidas
+            if row['GEOMETRIES'] and any(row['GEOMETRIES']):
+                for geom in row['GEOMETRIES']:
+                    if geom is not None and not geom.is_empty:
+                        folium.GeoJson(
+                            geom,
+                            style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
+                        ).add_to(m)
 
             folium.Circle(
                 location=[row['LAT'], row['LON']],
@@ -388,4 +374,4 @@ if kml_file and xlsx_file:
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {str(e)}")
 else:
-    st.info("Por favor, faça upload dos arquivos KML e Excel para continuar.")
+    st.info("Por favor, faça upload dos arquivos KML e Excel na barra lateral para continuar.")
