@@ -265,15 +265,43 @@ if kml_file and xlsx_file:
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
         
         with col2:
-            st.markdown("### Unidades Atendidas por Especialista")
-            # Contar o número de unidades por especialista
-            unit_count = resultados[resultados['GESTOR'] == gestor_selecionado].groupby('ESPECIALISTA')['UNIDADES_ATENDIDAS'].apply(len).sort_values(ascending=False).head(5)
-            if not unit_count.empty:
-                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                st.bar_chart(unit_count, color='#2196F3')
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("### Distâncias das Unidades")
+            
+            # Preparar dados para o gráfico
+            if especialista_selecionado == 'Todos':
+                # Para "Todos", mostrar top 10 unidades com maior distância, colorido por especialista
+                df_plot = pd.DataFrame()
+                for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
+                    for unidade, distancia in row['DETALHES']:
+                        df_plot = pd.concat([df_plot, pd.DataFrame({
+                            'Unidade': [unidade],
+                            'Distância (km)': [distancia],
+                            'Especialista': [row['ESPECIALISTA']]
+                        })])
+                
+                if not df_plot.empty:
+                    df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
+                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.warning("Nenhum dado disponível para o gestor selecionado.")
             else:
-                st.warning("Nenhum dado disponível para o gestor selecionado.")
+                # Para um especialista específico, mostrar todas as unidades com distâncias
+                df_especialista = resultados[
+                    (resultados['GESTOR'] == gestor_selecionado) &
+                    (resultados['ESPECIALISTA'] == especialista_selecionado)
+                ]
+                
+                if not df_especialista.empty:
+                    df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
+                    df_plot = df_plot.sort_values('Distância (km)', ascending=False)
+                    
+                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.warning("Nenhum dado disponível para o especialista selecionado.")
 
         # Filtra o DataFrame
         if especialista_selecionado == 'Todos':
@@ -288,8 +316,8 @@ if kml_file and xlsx_file:
                 for _, row in df_final.iterrows():
                     unidades.extend(row['UNIDADES_ATENDIDAS'])
                     distancias.extend(row['DETALHES'])
-                    if row['GEOMETRIES'] is not None:
-                        geometries.extend(row['GEOMETRIES'])
+                    if row['GEOMETRIAS'] is not None:
+                        geometries.extend(row['GEOMETRIAS'])
                     lats.append(row['LAT'])
                     lons.append(row['LON'])
 
@@ -310,7 +338,7 @@ if kml_file and xlsx_file:
                     'DIST_MEDIA': round(medias, 1),
                     'DIST_MAX': round(max_dist, 1),
                     'DETALHES': distancias,
-                    'GEOMETRIES': geometries if geometries else None
+                    'GEOMETRIAS': geometries if geometries else None
                 }
             else:
                 consolidated_data = None
@@ -319,12 +347,11 @@ if kml_file and xlsx_file:
                 (resultados['GESTOR'] == gestor_selecionado) &
                 (resultados['ESPECIALISTA'] == especialista_selecionado)
             ]
-            consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None  # Converter para dicionário
+            consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None
 
         # Exibir card do especialista
         if consolidated_data:
             row = consolidated_data
-            st.write("Depuração - GEOMETRIES:", row.get('GEOMETRIES'))  # Depuração
             with st.expander(f"{row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
                 st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
                 st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
@@ -351,7 +378,7 @@ if kml_file and xlsx_file:
             ).add_to(marker_cluster)
 
             # Verificar e adicionar geometrias válidas
-            geometries = row.get('GEOMETRIES', [])
+            geometries = row.get('GEOMETRIAS', [])
             if isinstance(geometries, list) and geometries and any(g is not None and not g.is_empty for g in geometries):
                 for geom in geometries:
                     if geom is not None and not geom.is_empty:
