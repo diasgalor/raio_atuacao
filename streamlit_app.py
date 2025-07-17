@@ -16,21 +16,21 @@ st.title("Raio de Atuação dos Analistas")
 # Upload do arquivo KML
 uploaded_kml = st.file_uploader("Faça upload do arquivo KML", type=["kml"])
 
-# Upload da tabela de analistas (CSV)
-uploaded_table = st.file_uploader("Faça upload da tabela de analistas (CSV)", type=["csv"])
+# Upload da tabela de analistas (Excel)
+uploaded_table = st.file_uploader("Faça upload da tabela de analistas (Excel)", type=["xlsx", "xls"])
 
 if uploaded_kml and uploaded_table:
     try:
         # Ler o arquivo KML
         gdf = gpd.read_file(uploaded_kml, driver='KML')
 
-        # Ler a tabela de analistas
-        df_analistas = pd.read_csv(uploaded_table)
+        # Ler a tabela de analistas (Excel)
+        df_analistas = pd.read_excel(uploaded_table)
 
         # Verificar se as colunas esperadas estão presentes
         expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE']
         if not all(col in df_analistas.columns for col in expected_columns):
-            st.error("O CSV deve conter as colunas: GESTOR, ESPECIALISTA, CIDADE_BASE, UNIDADE, COORDENADAS_CIDADE")
+            st.error("O arquivo Excel deve conter as colunas: GESTOR, ESPECIALISTA, CIDADE_BASE, UNIDADE, COORDENADAS_CIDADE")
             st.stop()
 
         # Dividir a coluna COORDENADAS_CIDADE em Latitude e Longitude
@@ -66,25 +66,27 @@ if uploaded_kml and uploaded_table:
         for idx, row in df_analistas.iterrows():
             especialista = row['ESPECIALISTA']
             cidade_base = row['CIDADE_BASE']
-            unidades = row['UNIDADE'].split(',') if ',' in row['UNIDADE'] else [row['UNIDADE']]  # Suporta múltiplas unidades
+            # Suporta múltiplas unidades separadas por vírgula
+            unidades = row['UNIDADE'].split(',') if ',' in row['UNIDADE'] else [row['UNIDADE']]
             lat = row['Latitude']
             lon = row['Longitude']
 
             # Calcular distâncias e raios para cada unidade
             popup_text = f"<b>Especialista:</b> {especialista}<br><b>Cidade Base:</b> {cidade_base}<br>"
-            max_raio_km = 0  # Raio total (máximo ou soma, dependendo da lógica)
-            
+            max_raio_km = 0  # Raio total (máximo das distâncias)
+
             for unidade in unidades:
                 unidade = unidade.strip()
                 gdf_unidade = gdf[gdf['Name'] == unidade]
+ferrer
                 if not gdf_unidade.empty:
                     centroide = gdf_unidade.iloc[0]['centroide']
                     dist_km = haversine(lon, lat, centroide.x, centroide.y)
                     # Usar a distância como raio de atuação (ajuste conforme necessário)
-                    raio_km = dist_km  # Ou substitua por um valor fixo, ex.: 50.0
+                    raio_km = dist_km  # Pode substituir por valor fixo ou coluna específica
                     max_raio_km = max(max_raio_km, raio_km)  # Usa o maior raio
                     popup_text += f"<b>Unidade {unidade}:</b> Distância ao centro: {dist_km:.2f} km<br>"
-                    
+
                     # Adicionar limites da unidade ao mapa
                     folium.GeoJson(
                         gdf_unidade.geometry.values[0],
@@ -124,4 +126,4 @@ if uploaded_kml and uploaded_table:
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {str(e)}")
 else:
-    st.info("Por favor, faça upload do arquivo KML e da tabela de analistas para começar.")
+    st.info("Por favor, faça upload do arquivo KML e da tabela de analistas (Excel) para começar.")
