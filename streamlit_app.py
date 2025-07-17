@@ -49,8 +49,8 @@ st.markdown("""
         border: 2px solid #2196F3;
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        padding: 0; /* Remover padding para evitar espaço extra */
-        margin: 0; /* Remover margem para evitar espaço extra */
+        padding: 0;
+        margin: 0;
         width: 100%;
         height: auto;
     }
@@ -254,7 +254,7 @@ if kml_file and xlsx_file:
 
         resultados = pd.DataFrame(resultados)
 
-        # Interface: seleção por gestor e especialista + gráfico de distribuição
+        # Interface: seleção por gestor e especialista
         col1, col2 = st.columns([1, 1], gap="medium")
         with col1:
             st.markdown("### Seleção")
@@ -264,147 +264,135 @@ if kml_file and xlsx_file:
             nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
         
-        with col2:
-            st.markdown("### Distâncias das Unidades")
-            
-            # Preparar dados para o gráfico
+        # Exibir card do especialista e gráfico de distâncias
+        if kml_file and xlsx_file:
             if especialista_selecionado == 'Todos':
-                # Para "Todos", mostrar top 10 unidades com maior distância, colorido por especialista
-                df_plot = pd.DataFrame()
-                for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
-                    for unidade, distancia in row['DETALHES']:
-                        df_plot = pd.concat([df_plot, pd.DataFrame({
-                            'Unidade': [unidade],
-                            'Distância (km)': [round(distancia)],
-                            'Especialista': [row['ESPECIALISTA']]
-                        })])
-                
-                if not df_plot.empty:
-                    df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                    with st.expander("Gráfico de Distâncias", expanded=True):
-                        st.markdown('<div class="chart-container" style="padding: 0; margin: 0; border: none;">', unsafe_allow_html=True)
-                        st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
-                        st.markdown('</div>', unsafe_allow_html=True)
+                df_final = resultados[resultados['GESTOR'] == gestor_selecionado]
+                if not df_final.empty:
+                    unidades = []
+                    distancias = []
+                    geometries = []
+                    lats = []
+                    lons = []
+                    for _, row in df_final.iterrows():
+                        unidades.extend(row['UNIDADES_ATENDIDAS'])
+                        distancias.extend(row['DETALHES'])
+                        if row['GEOMETRIES'] is not None:
+                            geometries.extend(row['GEOMETRIES'])
+                        lats.append(row['LAT'])
+                        lons.append(row['LON'])
+
+                    unidades = list(set(unidades))
+                    distancias = list(set(distancias))
+                    medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
+                    max_dist = max([d[1] for d in distancias]) if distancias else 0
+                    lat_central = sum(lats) / len(lats) if lats else 0
+                    lon_central = sum(lons) / len(lons) if lons else 0
+
+                    consolidated_data = {
+                        'ESPECIALISTA': 'Todos',
+                        'CIDADE_BASE': 'Consolidado',
+                        'LAT': lat_central,
+                        'LON': lon_central,
+                        'UNIDADES_ATENDIDAS': unidades,
+                        'DIST_MEDIA': round(medias, 1),
+                        'DIST_MAX': round(max_dist, 1),
+                        'DETALHES': distancias,
+                        'GEOMETRIES': geometries if geometries else None
+                    }
                 else:
-                    st.warning("Nenhum dado disponível para o gestor selecionado.")
+                    consolidated_data = None
             else:
-                # Para um especialista específico, mostrar todas as unidades com distâncias
-                df_especialista = resultados[
+                df_final = resultados[
                     (resultados['GESTOR'] == gestor_selecionado) &
                     (resultados['ESPECIALISTA'] == especialista_selecionado)
                 ]
-                
-                if not df_especialista.empty:
-                    df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
-                    df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
-                    df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                    with st.expander("Gráfico de Distâncias", expanded=True):
-                        st.markdown('<div class="chart-container" style="padding: 0; margin: 0; border: none;">', unsafe_allow_html=True)
-                        st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
-                        st.markdown('</div>', unsafe_allow_html=True)
+                consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None
+
+            if consolidated_data:
+                row = consolidated_data
+                with st.expander(f"{row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
+                    st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
+                    st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
+                    st.markdown(f"**Raio de Atuação (Máxima):** {row['DIST_MAX']} km")
+                    st.markdown("**Detalhes das Unidades:**")
+                    detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
+                    st.table(detalhes_df)
+
+                # Gráfico de distâncias abaixo do card
+                if especialista_selecionado == 'Todos':
+                    df_plot = pd.DataFrame()
+                    for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
+                        for unidade, distancia in row['DETALHES']:
+                            df_plot = pd.concat([df_plot, pd.DataFrame({
+                                'Unidade': [unidade],
+                                'Distância (km)': [round(distancia)],
+                                'Especialista': [row['ESPECIALISTA']]
+                            })])
+                    if not df_plot.empty:
+                        df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
+                        with st.expander("Gráfico de Distâncias", expanded=True):
+                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                            st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
+                            st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.warning("Nenhum dado disponível para o gestor selecionado.")
                 else:
-                    st.warning("Nenhum dado disponível para o especialista selecionado.")
+                    df_especialista = resultados[
+                        (resultados['GESTOR'] == gestor_selecionado) &
+                        (resultados['ESPECIALISTA'] == especialista_selecionado)
+                    ]
+                    if not df_especialista.empty:
+                        df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
+                        df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
+                        df_plot = df_plot.sort_values('Distância (km)', ascending=False)
+                        with st.expander("Gráfico de Distâncias", expanded=True):
+                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                            st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
+                            st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.warning("Nenhum dado disponível para o especialista selecionado.")
 
-        # Filtra o DataFrame
-        if especialista_selecionado == 'Todos':
-            df_final = resultados[resultados['GESTOR'] == gestor_selecionado]
-            # Consolidar dados de todos os especialistas
-            if not df_final.empty:
-                unidades = []
-                distancias = []
-                geometries = []
-                lats = []
-                lons = []
-                for _, row in df_final.iterrows():
-                    unidades.extend(row['UNIDADES_ATENDIDAS'])
-                    distancias.extend(row['DETALHES'])
-                    if row['GEOMETRIES'] is not None:
-                        geometries.extend(row['GEOMETRIES'])
-                    lats.append(row['LAT'])
-                    lons.append(row['LON'])
+                # Criação do mapa
+                m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
+                marker_cluster = MarkerCluster().add_to(m)
 
-                unidades = list(set(unidades))  # Remover duplicatas
-                distancias = list(set(distancias))  # Remover duplicatas
-                medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
-                max_dist = max([d[1] for d in distancias]) if distancias else 0
-                # Calcular centroide médio para o mapa
-                lat_central = sum(lats) / len(lats) if lats else 0
-                lon_central = sum(lons) / len(lons) if lons else 0
+                popup_text = (
+                    f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
+                    f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
+                    f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
+                    f"<b>Unidades:</b> {', '.join(row['UNIDADES_ATENDIDAS'])}<br>"
+                    f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km"
+                )
+                folium.Marker(
+                    location=[row['LAT'], row['LON']],
+                    popup=folium.Popup(popup_text, max_width=300),
+                    icon=folium.Icon(color='blue', icon='user')
+                ).add_to(marker_cluster)
 
-                consolidated_data = {
-                    'ESPECIALISTA': 'Todos',
-                    'CIDADE_BASE': 'Consolidado',
-                    'LAT': lat_central,
-                    'LON': lon_central,
-                    'UNIDADES_ATENDIDAS': unidades,
-                    'DIST_MEDIA': round(medias, 1),
-                    'DIST_MAX': round(max_dist, 1),
-                    'DETALHES': distancias,
-                    'GEOMETRIES': geometries if geometries else None
-                }
+                geometries = row.get('GEOMETRIES', [])
+                if isinstance(geometries, list) and geometries and any(g is not None and not g.is_empty for g in geometries):
+                    for geom in geometries:
+                        if geom is not None and not geom.is_empty:
+                            folium.GeoJson(
+                                geom,
+                                style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
+                            ).add_to(m)
+
+                folium.Circle(
+                    location=[row['LAT'], row['LON']],
+                    radius=row['DIST_MAX'] * 1000,
+                    color='#2196F3',
+                    fill=True,
+                    fill_opacity=0.1,
+                    weight=1,
+                    popup=f"Raio de atuação: {row['DIST_MAX']} km"
+                ).add_to(m)
+
+                st.subheader("Mapa")
+                st_folium(m, width=800, height=400)
             else:
-                consolidated_data = None
-        else:
-            df_final = resultados[
-                (resultados['GESTOR'] == gestor_selecionado) &
-                (resultados['ESPECIALISTA'] == especialista_selecionado)
-            ]
-            consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None
-
-        # Exibir card do especialista
-        if consolidated_data:
-            row = consolidated_data
-            with st.expander(f"{row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
-                st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
-                st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
-                st.markdown(f"**Raio de Atuação (Máxima):** {row['DIST_MAX']} km")
-                st.markdown("**Detalhes das Unidades:**")
-                detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
-                st.table(detalhes_df)
-
-            # Criação do mapa
-            m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
-            marker_cluster = MarkerCluster().add_to(m)
-
-            popup_text = (
-                f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
-                f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
-                f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
-                f"<b>Unidades:</b> {', '.join(row['UNIDADES_ATENDIDAS'])}<br>"
-                f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km"
-            )
-            folium.Marker(
-                location=[row['LAT'], row['LON']],
-                popup=folium.Popup(popup_text, max_width=300),
-                icon=folium.Icon(color='blue', icon='user')
-            ).add_to(marker_cluster)
-
-            # Verificar e adicionar geometrias válidas
-            geometries = row.get('GEOMETRIES', [])
-            if isinstance(geometries, list) and geometries and any(g is not None and not g.is_empty for g in geometries):
-                for geom in geometries:
-                    if geom is not None and not geom.is_empty:
-                        folium.GeoJson(
-                            geom,
-                            style_function=lambda x: {'fillColor': '#4CAF50', 'color': '#4CAF50', 'fillOpacity': 0.1, 'weight': 1}
-                        ).add_to(m)
-
-            folium.Circle(
-                location=[row['LAT'], row['LON']],
-                radius=row['DIST_MAX'] * 1000,
-                color='#2196F3',
-                fill=True,
-                fill_opacity=0.1,
-                weight=1,
-                popup=f"Raio de atuação: {row['DIST_MAX']} km"
-            ).add_to(m)
-
-            st.subheader("Mapa")
-            st_folium(m, width=800, height=400)
-
-        else:
-            st.warning("Nenhum dado encontrado para o especialista selecionado.")
-
+                st.warning("Nenhum dado encontrado para o especialista selecionado.")
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {str(e)}")
 else:
