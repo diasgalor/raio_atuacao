@@ -41,6 +41,22 @@ if uploaded_kml and uploaded_table:
             st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude, longitude'.")
             st.stop()
 
+        # Função para determinar a zona UTM com base na longitude
+        def get_utm_zone(longitude):
+            zone_number = int((longitude + 180) / 6) + 1
+            hemisphere = 'S' if df_analistas['Latitude'].mean() < 0 else 'N'
+            return f"EPSG:327{zone_number}" if hemisphere == 'S' else f"EPSG:326{zone_number}"
+
+        # Reprojetar o GeoDataFrame para o sistema UTM
+        utm_crs = get_utm_zone(df_analistas['Longitude'].mean())
+        gdf_utm = gdf.to_crs(utm_crs)
+
+        # Calcular centroides no CRS projetado
+        gdf_utm['centroide'] = gdf_utm.geometry.centroid
+        gdf['centroide'] = gdf_utm['centroide'].to_crs(gdf.crs)  # Reprojetar de volta para WGS84
+        gdf['centroide_lat'] = gdf['centroide'].y
+        gdf['centroide_lon'] = gdf['centroide'].x
+
         # Função de distância haversine (em km)
         def haversine(lon1, lat1, lon2, lat2):
             R = 6371  # raio da Terra em km
@@ -50,11 +66,6 @@ if uploaded_kml and uploaded_table:
             a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
             c = 2 * math.asin(math.sqrt(a))
             return R * c
-
-        # Calcular centroides das unidades no KML
-        gdf['centroide'] = gdf.geometry.centroid
-        gdf['centroide_lat'] = gdf['centroide'].y
-        gdf['centroide_lon'] = gdf['centroide'].x
 
         # Criar mapa centrado na média das coordenadas dos analistas
         centro_mapa = [df_analistas['Latitude'].mean(), df_analistas['Longitude'].mean()]
