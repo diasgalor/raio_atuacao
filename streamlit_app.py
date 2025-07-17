@@ -9,24 +9,9 @@ import math
 from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
+import plotly.express as px
 
-# Exibir importações na sidebar
-st.sidebar.title("Importações")
-st.sidebar.code("""
-import streamlit as st
-import pandas as pd
-import geopandas as gpd
-from shapely.geometry import Point
-from shapely.ops import unary_union
-import folium
-from folium.plugins import MarkerCluster
-import math
-from unidecode import unidecode
-import xml.etree.ElementTree as ET
-from streamlit_folium import st_folium
-""")
-
-# Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
+# Configuração da página
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # CSS para design minimalista com blocos destacados
@@ -40,20 +25,12 @@ st.markdown("""
         max-width: 1200px;
         margin: 0 auto;
     }
-    .stSelectbox {
+    .stSelectbox, .stFileUploader {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
         border-radius: 5px;
         padding: 10px;
         box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-    .stExpander {
-        background-color: #fafafa;
-        border: 2px solid #2196F3;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        margin-bottom: 15px;
-        padding: 15px;
     }
     .chart-container {
         background-color: #ffffff;
@@ -63,23 +40,44 @@ st.markdown("""
         padding: 15px;
         margin-bottom: 15px;
     }
-    .stMarkdown h3 {
-        color: #333333;
-        font-size: 18px;
-        margin-bottom: 10px;
-    }
-    .stButton>button {
-        background-color: #e0e0e0;
-        color: #333333;
-        border: none;
-        border-radius: 5px;
-        padding: 8px 16px;
-    }
-    .stButton>button:hover {
-        background-color: #d0d0d0;
-    }
     </style>
 """, unsafe_allow_html=True)
+
+# Sidebar: Uploads de arquivos
+st.sidebar.title("📁 Importar arquivos")
+
+uploaded_excel = st.sidebar.file_uploader("Planilha com analistas e unidades (.xlsx)", type="xlsx")
+uploaded_kml = st.sidebar.file_uploader("Arquivo de mapa KML (.kml)", type="kml")
+
+# Título principal
+st.title("📍 Raio de Atuação dos Analistas")
+st.markdown("Selecione um gestor e especialista (ou 'Todos') para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa.", unsafe_allow_html=True)
+
+# Exemplo de leitura e gráfico reativo sem duplicação:
+if uploaded_excel:
+    df = pd.read_excel(uploaded_excel)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        gestor_selecionado = st.selectbox("Selecionar Gestor", options=["Todos"] + sorted(df["GESTOR"].dropna().unique().tolist()))
+    with col2:
+        especialista_selecionado = st.selectbox("Selecionar Especialista", options=["Todos"] + sorted(df["ESPECIALISTA"].dropna().unique().tolist()))
+
+    # Filtro da tabela com base nas seleções
+    df_filtrado = df.copy()
+    if gestor_selecionado != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["GESTOR"] == gestor_selecionado]
+    if especialista_selecionado != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["ESPECIALISTA"] == especialista_selecionado]
+
+    # Gráfico: quantidade de unidades por especialista (sem duplicar bloco)
+    if not df_filtrado.empty:
+        with st.container():
+            st.markdown("<div class='chart-container'>", unsafe_allow_html=True)
+            st.subheader("📊 Unidades por Especialista")
+            grafico = px.histogram(df_filtrado, x="ESPECIALISTA", color="UNIDADE", barmode="group", text_auto=True)
+            st.plotly_chart(grafico, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # Título e descrição
 st.title("📍 Raio de Atuação dos Analistas")
