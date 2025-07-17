@@ -264,7 +264,7 @@ if kml_file and xlsx_file:
             nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
         
-        # Exibir card do especialista e gráfico de distâncias
+        # Exibir card do especialista e seções
         if kml_file and xlsx_file:
             if especialista_selecionado == 'Todos':
                 df_final = resultados[resultados['GESTOR'] == gestor_selecionado]
@@ -319,39 +319,40 @@ if kml_file and xlsx_file:
                     detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
                     st.table(detalhes_df)
 
-                # Gráfico de distâncias abaixo do card
-                if especialista_selecionado == 'Todos':
-                    df_plot = pd.DataFrame()
-                    for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
-                        for unidade, distancia in row['DETALHES']:
-                            df_plot = pd.concat([df_plot, pd.DataFrame({
-                                'Unidade': [unidade],
-                                'Distância (km)': [round(distancia)],
-                                'Especialista': [row['ESPECIALISTA']]
-                            })])
-                    if not df_plot.empty:
-                        df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                        with st.expander("Gráfico de Distâncias", expanded=True):
-                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                            st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
+                # Opção para exibir o gráfico
+                if st.checkbox("Mostrar Gráfico de Distâncias", value=False):
+                    if especialista_selecionado == 'Todos':
+                        df_plot = pd.DataFrame()
+                        for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
+                            for unidade, distancia in row['DETALHES']:
+                                df_plot = pd.concat([df_plot, pd.DataFrame({
+                                    'Unidade': [unidade],
+                                    'Distância (km)': [round(distancia)],
+                                    'Especialista': [row['ESPECIALISTA']]
+                                })])
+                        if not df_plot.empty:
+                            df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
+                            with st.expander("Gráfico de Distâncias", expanded=True):
+                                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                                st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+                        else:
+                            st.warning("Nenhum dado disponível para o gestor selecionado.")
                     else:
-                        st.warning("Nenhum dado disponível para o gestor selecionado.")
-                else:
-                    df_especialista = resultados[
-                        (resultados['GESTOR'] == gestor_selecionado) &
-                        (resultados['ESPECIALISTA'] == especialista_selecionado)
-                    ]
-                    if not df_especialista.empty:
-                        df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
-                        df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
-                        df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                        with st.expander("Gráfico de Distâncias", expanded=True):
-                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                            st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-                    else:
-                        st.warning("Nenhum dado disponível para o especialista selecionado.")
+                        df_especialista = resultados[
+                            (resultados['GESTOR'] == gestor_selecionado) &
+                            (resultados['ESPECIALISTA'] == especialista_selecionado)
+                        ]
+                        if not df_especialista.empty:
+                            df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
+                            df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
+                            df_plot = df_plot.sort_values('Distância (km)', ascending=False)
+                            with st.expander("Gráfico de Distâncias", expanded=True):
+                                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                                st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+                        else:
+                            st.warning("Nenhum dado disponível para o especialista selecionado.")
 
                 # Criação do mapa
                 m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
