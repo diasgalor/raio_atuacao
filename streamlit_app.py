@@ -78,17 +78,6 @@ def extrair_dados_kml(kml_content):
 def formatar_nome(nome):
     return unidecode(nome.upper()) if isinstance(nome, str) else nome
 
-# Função para normalizar coordenadas
-def normalizar_coordenadas(valor, scale_factor=1000000000):
-    if isinstance(valor, str):
-        try:
-            valor_float = float(valor.replace(',', '')) / scale_factor
-            return round(valor_float, 6)
-        except ValueError:
-            st.warning(f"Não foi possível converter o valor: {valor}")
-            return None
-    return None
-
 # Título da aplicação
 st.title("Raio de Atuação dos Analistas")
 
@@ -102,12 +91,13 @@ if uploaded_kml and uploaded_table:
         kml_content = uploaded_kml.read().decode('utf-8')
         gdf = extrair_dados_kml(kml_content)
 
-        # Exibir metadados do KML
+        # Exibir metadados do KML (excluindo a coluna geometry)
         st.subheader("Metadados do KML")
         st.write("Colunas disponíveis no KML:")
         st.write(gdf.columns.tolist())
-        st.write("Primeiras linhas do KML:")
-        st.dataframe(gdf.head())
+        st.write("Primeiras linhas do KML (sem coluna geometry):")
+        non_geometry_columns = [col for col in gdf.columns if col != 'geometry']
+        st.dataframe(gdf[non_geometry_columns].head())
 
         # Selecionar coluna com nomes das unidades/fazendas
         kml_name_column = st.selectbox(
@@ -118,18 +108,24 @@ if uploaded_kml and uploaded_table:
         gdf['Name_normalized'] = gdf[kml_name_column].apply(formatar_nome)
 
         # Ler a tabela de analistas
-        df_analistas = pd.read_excel(uploaded_table, dtype={'VL_LATITUDE': str, 'VL_LONGITUDE': str})
+        df_analistas = pd.read_excel(uploaded_table)
         df_analistas.columns = df_analistas.columns.str.strip()
 
         # Verificar colunas esperadas
-        expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'VL_LATITUDE', 'VL_LONGITUDE']
-        if not all(col in df_analistas.columns for col in expected_columns):
-            st.error("O arquivo Excel deve conter as colunas: GESTOR, ESPECIALISTA, CIDADE_BASE, UNIDADE, VL_LATITUDE, VL_LONGITUDE")
+        expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE']
+        missing_columns = [col for col in expected_columns if col not in df_analistas.columns]
+        if missing_columns:
+            st.error(f"O arquivo Excel está faltando as colunas: {', '.join(missing_columns)}")
             st.stop()
 
-        # Normalizar coordenadas
-        df_analistas['Latitude'] = df_analistas['VL_LATITUDE'].apply(normalizar_coordenadas)
-        df_analistas['Longitude'] = df_analistas['VL_LONGITUDE'].apply(normalizar_coordenadas)
+        # Dividir COORDENADAS_CIDADE em Latitude e Longitude
+        try:
+            df_analistas[['Latitude', 'Longitude']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
+        except Exception as e:
+            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude, longitude'.")
+            st.stop()
+
+        # Normalizar nomes das unidades
         df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(formatar_nome)
 
         # Verificar coluna FAZENDA
@@ -291,7 +287,7 @@ if uploaded_kml and uploaded_table:
 
         # Exibir a tabela de analistas
         st.subheader("Tabela de Analistas")
-        st.dataframe(df_analistas[['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'VL_LATITUDE', 'VL_LONGITUDE'] + (['FAZENDA'] if 'FAZENDA' in df_analistas.columns else [])])
+        st.dataframe(df_analistas[['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE'] + (['FAZENDA'] if 'FAZENDA' in df_analistas.columns else [])])
 
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {str(e)}")
