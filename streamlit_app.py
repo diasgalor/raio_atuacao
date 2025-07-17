@@ -255,53 +255,78 @@ if kml_file and xlsx_file:
         resultados = pd.DataFrame(resultados)
 
         # Interface: seleção por gestor e especialista + gráfico de distribuição
-        col1, col2 = st.columns([1, 1], gap="medium")
-        with col1:
-            st.markdown("### Seleção")
-            gestores = sorted(resultados['GESTOR'].unique())
-            gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
-            especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
-            nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
-            especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
+col1, col2 = st.columns([1, 1], gap="medium")
+with col1:
+    st.markdown("### Seleção")
+    gestores = sorted(resultados['GESTOR'].unique())
+    gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
+    especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
+    nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
+    especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
+
+with col2:
+    st.markdown("### Distâncias das Unidades")
+    
+    # Preparar dados para o gráfico
+    if especialista_selecionado == 'Todos':
+        # Para "Todos", mostrar top 10 unidades com maior distância, colorido por especialista
+        df_plot = pd.DataFrame()
+        for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
+            for unidade, distancia in row['DETALHES']:
+                df_plot = pd.concat([df_plot, pd.DataFrame({
+                    'Unidade': [unidade],
+                    'Distância (km)': [distancia],
+                    'Especialista': [row['ESPECIALISTA']]
+                })])
         
-        with col2:
-            st.markdown("### Distâncias das Unidades")
+        if not df_plot.empty:
+            df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
             
-            # Preparar dados para o gráfico
-            if especialista_selecionado == 'Todos':
-                # Para "Todos", mostrar top 10 unidades com maior distância, colorido por especialista
-                df_plot = pd.DataFrame()
-                for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
-                    for unidade, distancia in row['DETALHES']:
-                        df_plot = pd.concat([df_plot, pd.DataFrame({
-                            'Unidade': [unidade],
-                            'Distância (km)': [distancia],
-                            'Especialista': [row['ESPECIALISTA']]
-                        })])
-                
-                if not df_plot.empty:
-                    df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                else:
-                    st.warning("Nenhum dado disponível para o gestor selecionado.")
-            else:
-                # Para um especialista específico, mostrar todas as unidades com distâncias
-                df_especialista = resultados[
-                    (resultados['GESTOR'] == gestor_selecionado) &
-                    (resultados['ESPECIALISTA'] == especialista_selecionado)
-                ]
-                
-                if not df_especialista.empty:
-                    df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
-                    df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                    
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                else:
-                    st.warning("Nenhum dado disponível para o especialista selecionado.")
+            # Configurar o gráfico com altura fixa e margens ajustadas
+            chart = st.bar_chart(
+                df_plot, 
+                x='Unidade', 
+                y='Distância (km)', 
+                color='Especialista', 
+                use_container_width=True,
+                height=400  # Altura fixa para melhor visualização
+            )
+            
+            # Adicionar CSS para ajustar o container do gráfico
+            st.markdown("""
+                <style>
+                .stBar {
+                    margin-bottom: 20px;
+                }
+                .stBar > div {
+                    padding-right: 20px;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+        else:
+            st.warning("Nenhum dado disponível para o gestor selecionado.")
+    else:
+        # Para um especialista específico, mostrar todas as unidades com distâncias
+        df_especialista = resultados[
+            (resultados['GESTOR'] == gestor_selecionado) &
+            (resultados['ESPECIALISTA'] == especialista_selecionado)
+        ]
+        
+        if not df_especialista.empty:
+            df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
+            df_plot = df_plot.sort_values('Distância (km)', ascending=False)
+            
+            # Configurar o gráfico com altura fixa
+            chart = st.bar_chart(
+                df_plot, 
+                x='Unidade', 
+                y='Distância (km)', 
+                color='#2196F3', 
+                use_container_width=True,
+                height=400  # Altura fixa para melhor visualização
+            )
+        else:
+            st.warning("Nenhum dado disponível para o especialista selecionado.")
 
         # Filtra o DataFrame
         if especialista_selecionado == 'Todos':
