@@ -13,7 +13,7 @@ from streamlit_folium import st_folium
 # Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
-# CSS para design minimalista
+# CSS para design minimalista com cards destacados
 st.markdown("""
     <style>
     body {
@@ -24,18 +24,19 @@ st.markdown("""
         max-width: 1200px;
         margin: 0 auto;
     }
-    .stSelectbox, .stMultiSelect {
+    .stSelectbox {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
         border-radius: 5px;
         padding: 10px;
     }
     .stExpander {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 10px;
+        background-color: #fafafa;
+        border: 2px solid #2196F3;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        margin-bottom: 15px;
+        padding: 10px;
     }
     .stMarkdown h3 {
         color: #333333;
@@ -57,7 +58,7 @@ st.markdown("""
 
 # Título e descrição
 st.title("📍 Raio de Atuação dos Analistas")
-st.markdown("Selecione um gestor e especialista para visualizar as unidades atendidas e o raio de atuação no mapa.", unsafe_allow_html=True)
+st.markdown("Selecione um gestor e especialista (ou 'Todos') para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa.", unsafe_allow_html=True)
 
 # Função para extrair metadados e geometria do KML
 def extrair_dados_kml(kml_content):
@@ -100,7 +101,7 @@ def extrair_dados_kml(kml_content):
                 coords_text = point_elem.text.strip()
                 coords = tuple(map(float, coords_text.split(',')))
                 try:
-                    geometry = Point(coords[0], coords[1])
+                    geometry = Point(coords[0], c[1])
                 except Exception as geom_e:
                     st.warning(f"Erro ao criar geometria para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")
                     geometry = None
@@ -152,23 +153,7 @@ if kml_file and xlsx_file:
         gdf_kml = extrair_dados_kml(kml_content)
         gdf_kml['geometry'] = gdf_kml['geometry'].to_crs(epsg=4326)
         gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.centroid.x, p.centroid.y]))
-        gdf_kml['UNIDADE_normalized'] = gdf_kml['Name'].apply(normalize_str)
-
-        # Exibir metadados do KML (excluindo a coluna geometry)
-        with st.expander("🔍 Metadados do KML"):
-            st.write("**Colunas disponíveis no KML:**")
-            st.write(gdf_kml.columns.tolist())
-            st.write("**Primeiras linhas do KML (sem coluna geometry):**")
-            non_geometry_columns = [col for col in gdf_kml.columns if col != 'geometry']
-            st.dataframe(gdf_kml[non_geometry_columns].head())
-
-        # Selecionar coluna com nomes das unidades/fazendas
-        kml_name_column = st.selectbox(
-            "Selecione a coluna do KML com os nomes das unidades/fazendas:",
-            gdf_kml.columns.tolist(),
-            index=gdf_kml.columns.tolist().index('NOME_FAZ' if 'NOME_FAZ' in gdf_kml.columns else 'Name') if 'NOME_FAZ' in gdf_kml.columns or 'Name' in gdf_kml.columns else 0
-        )
-        gdf_kml['UNIDADE_normalized'] = gdf_kml[kml_name_column].apply(normalize_str)
+        gdf_kml['UNIDADE_normalized'] = gdf_kml['NOME_FAZ'].apply(normalize_str)
 
         # Leitura da planilha de analistas
         df_analistas = pd.read_excel(xlsx_file)
@@ -263,24 +248,69 @@ if kml_file and xlsx_file:
             gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
         with col2:
             especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
-            nomes_especialistas = sorted(especialistas_filtrados['ESPECIALISTA'].unique())
+            nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
 
         # Filtra o DataFrame
-        df_final = resultados[
-            (resultados['GESTOR'] == gestor_selecionado) &
-            (resultados['ESPECIALISTA'] == especialista_selecionado)
-        ]
+        if especialista_selecionado == 'Todos':
+            df_final = resultados[resultados['GESTOR'] == gestor_selecionado]
+            # Consolidar dados de todos os especialistas
+            if not df_final.empty:
+                unidades = []
+                distancias = []
+                geometries = []
+                lats = []
+                lons = []
+                for _, row in df_final.iterrows():
+                    unidades.extend(row['UNIDADES_ATENDIDAS'])
+                    distancias.extend(row['DETALHES'])
+                    geometries.extend(row['GEOMETRIES'])
+                    lats.append(row['LAT'])
+                    lons.append(row['LON'])
+
+                unidades = list(set(unidades))  # Remover duplicatas
+                distancias = list(set(distancias))  # Remover duplicatas
+                medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
+                max_dist = max([d[1] for d in distancias]) if distancias else 0
+                # Calcular centroide médio para o mapa
+                lat_central = sum(lats) / len(lats) if lats else 0
+                lon_central = sum(lons) / len(lons) if lons else 0
+
+                consolidated_data = {
+                    'ESPECIALISTA': 'Todos',
+                    'CIDADE_BASE': 'Consolidado',
+                    'LAT': lat_central,
+                    'LON': lon_central,
+                    'UNIDADES_ATENDIDAS': unidades,
+                    'DIST_MEDIA': round(medias, 1),
+                    'DIST_MAX': round(max_dist, 1),
+                    'DETALHES': distancias,
+                    'GEOMETRIES': geometries
+                }
+            else:
+                consolidated_data = None
+        else:
+            df_final = resultados[
+                (resultados['GESTOR'] == gestor_selecionado) &
+                (resultados['ESPECIALISTA'] == especialista_selecionado)
+            ]
+            consolidated_data = df_final.iloc[0] if not df_final.empty else None
 
         # Exibir card do especialista
-        if not df_final.empty:
-            row = df_final.iloc[0]
+        if consolidated_data:
+            row = consolidated_data
             with st.expander(f"{row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
                 st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
                 st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
                 st.markdown(f"**Raio de Atuação (Máxima):** {row['DIST_MAX']} km")
                 st.markdown("**Detalhes das Unidades:**")
-                st.table(pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)'))
+                detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
+                st.table(detalhes_df)
+
+                # Gráfico de barras
+                st.markdown("**Maiores Distâncias:**")
+                chart_data = detalhes_df.set_index('Unidade')['Distância (km)']
+                st.bar_chart(chart_data, color='#2196F3')
 
             # Criação do mapa
             m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
@@ -288,7 +318,7 @@ if kml_file and xlsx_file:
 
             popup_text = (
                 f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
-                f"<b>Gestor:</b> {row['GESTOR'].title()}<br>"
+                f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
                 f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
                 f"<b>Unidades:</b> {', '.join(row['UNIDADES_ATENDIDAS'])}<br>"
                 f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km"
@@ -316,7 +346,7 @@ if kml_file and xlsx_file:
             ).add_to(m)
 
             st.subheader("Mapa")
-            st_folium(m, width=1000, height=500)
+            st_folium(m, width=800, height=400)
 
         else:
             st.warning("Nenhum dado encontrado para o especialista selecionado.")
