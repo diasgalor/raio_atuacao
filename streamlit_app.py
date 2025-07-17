@@ -10,6 +10,9 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 
+# Configuração da página (PRIMEIRA INSTRUÇÃO)
+st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+
 # Exibir importações na sidebar
 st.sidebar.title("Importações")
 st.sidebar.code("""
@@ -25,9 +28,6 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 """)
-
-# Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
-st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # CSS para design minimalista com blocos destacados
 st.markdown("""
@@ -126,7 +126,7 @@ def extrair_dados_kml(kml_content):
                 coords_text = point_elem.text.strip()
                 coords = tuple(map(float, coords_text.split(',')))
                 try:
-                    geometry = Point(coords[0], coords[1])
+                    geometry = Point(coords[0], coords[1])  # Corrigido: usar coords[1] em vez de c[1]
                 except Exception as geom_e:
                     st.warning(f"Erro ao criar geometria para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")
                     geometry = None
