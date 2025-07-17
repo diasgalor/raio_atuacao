@@ -50,7 +50,7 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         padding: 15px;
-        margin-bottom: 15px;
+        margin-bottom: 0px; /* Remover margem inferior para evitar espaço vazio */
         width: 100%;
         height: auto;
     }
@@ -275,16 +275,16 @@ if kml_file and xlsx_file:
                     for unidade, distancia in row['DETALHES']:
                         df_plot = pd.concat([df_plot, pd.DataFrame({
                             'Unidade': [unidade],
-                            'Distância (km)': [distancia],
+                            'Distância (km)': [round(distancia)],  # Remover casas decimais
                             'Especialista': [row['ESPECIALISTA']]
                         })])
                 
                 if not df_plot.empty:
                     df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                    st.write("Depuração - df_plot:", df_plot)  # Depuração
-                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.expander("Gráfico de Distâncias", expanded=True):  # Card para o gráfico
+                        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                        st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.warning("Nenhum dado disponível para o gestor selecionado.")
             else:
@@ -296,11 +296,12 @@ if kml_file and xlsx_file:
                 
                 if not df_especialista.empty:
                     df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
+                    df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)  # Remover casas decimais
                     df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                    st.write("Depuração - df_plot:", df_plot)  # Depuração
-                    st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.expander("Gráfico de Distâncias", expanded=True):  # Card para o gráfico
+                        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                        st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.warning("Nenhum dado disponível para o especialista selecionado.")
 
@@ -317,7 +318,7 @@ if kml_file and xlsx_file:
                 for _, row in df_final.iterrows():
                     unidades.extend(row['UNIDADES_ATENDIDAS'])
                     distancias.extend(row['DETALHES'])
-                    if row['GEOMETRIES'] is not None:  # Corrigido para GEOMETRIES
+                    if row['GEOMETRIES'] is not None:
                         geometries.extend(row['GEOMETRIES'])
                     lats.append(row['LAT'])
                     lons.append(row['LON'])
