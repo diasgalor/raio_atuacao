@@ -319,11 +319,12 @@ if kml_file and xlsx_file:
                 (resultados['GESTOR'] == gestor_selecionado) &
                 (resultados['ESPECIALISTA'] == especialista_selecionado)
             ]
-            consolidated_data = df_final.iloc[0] if not df_final.empty else None
+            consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None  # Converter para dicionário
 
         # Exibir card do especialista
         if consolidated_data:
             row = consolidated_data
+            st.write("Depuração - GEOMETRIES:", row.get('GEOMETRIES'))  # Depuração
             with st.expander(f"{row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
                 st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
                 st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
@@ -350,8 +351,9 @@ if kml_file and xlsx_file:
             ).add_to(marker_cluster)
 
             # Verificar e adicionar geometrias válidas
-            if isinstance(row['GEOMETRIES'], list) and row['GEOMETRIES'] and any(g is not None and not g.is_empty for g in row['GEOMETRIES']):
-                for geom in row['GEOMETRIES']:
+            geometries = row.get('GEOMETRIES', [])
+            if isinstance(geometries, list) and geometries and any(g is not None and not g.is_empty for g in geometries):
+                for geom in geometries:
                     if geom is not None and not geom.is_empty:
                         folium.GeoJson(
                             geom,
