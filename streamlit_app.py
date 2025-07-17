@@ -145,62 +145,56 @@ if uploaded_kml and uploaded_table:
             else:
                 df_exibir = df_analistas.copy()
 
-            # Mostrar resumo por gestor (filtrado)
-            st.subheader("Resumo por Gestor")
-            gestores = df_exibir['GESTOR'].unique()
-            for gestor in gestores:
-                especialistas = df_exibir[df_exibir['GESTOR'] == gestor]
-                with st.expander(f"Gestor: {gestor}"):
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Número de Especialistas", len(especialistas))
-                    distancias = []
-                    for _, row in especialistas.iterrows():
-                        unidades = [u.strip() for u in row['UNIDADE_normalized'].split(',')]
-                        for unidade in unidades:
-                            gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
-                            if not gdf_unidade.empty:
-                                centroide = gdf_unidade.iloc[0]['centroide']
-                                dist_km = haversine(row['Longitude'], row['Latitude'], centroide.x, centroide.y)
-                                distancias.append(dist_km)
-                    if distancias:
-                        col2.metric("Distância Média (km)", f"{sum(distancias)/len(distancias):.1f}")
-                        col3.metric("Distância Máxima (km)", f"{max(distancias):.1f}")
+            # Agrupar df_analistas por GESTOR, ESPECIALISTA, CIDADE_BASE, Latitude, Longitude,
+# agregando as UNIDADES numa lista única por especialista
+df_agrupado = (
+    df_analistas.groupby(
+        ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'Latitude', 'Longitude'], dropna=False
+    )['UNIDADE_normalized']
+    .apply(lambda x: ','.join(sorted(set([u.strip() for sublist in x.str.split(',') for u in sublist]))))
+    .reset_index()
+)
 
-            # Mostrar cards individuais por especialista com métricas agregadas
-            st.subheader("Detalhes dos Especialistas Selecionados")
-            for idx, row in df_exibir.iterrows():
-                especialista = row['ESPECIALISTA']
-                cidade_base = row['CIDADE_BASE']
-                unidades = [u.strip() for u in row['UNIDADE_normalized'].split(',')]
-                lat, lon = row['Latitude'], row['Longitude']
-                if pd.isna(lat) or pd.isna(lon):
-                    continue
+st.subheader("Resumo e Detalhes por Gestor e Especialista")
 
-                distancias_unidades = []
-                raios_unidades = []  # mesmo valor do raio = distância especialista-unidade
+# Filtrar especialistas selecionados se houver filtro
+if selecionados:
+    df_agrupado = df_agrupado[df_agrupado['ESPECIALISTA'].isin(selecionados)]
 
-                # Calcular distâncias para cada unidade
-                for unidade in unidades:
-                    gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
-                    if not gdf_unidade.empty:
-                        centroide = gdf_unidade.iloc[0]['centroide']
-                        dist_km = haversine(lon, lat, centroide.x, centroide.y)
-                        distancias_unidades.append((unidade, dist_km))
-                        raios_unidades.append(dist_km)
+for gestor in sorted(df_agrupado['GESTOR'].unique()):
+    with st.expander(f"Gestor: {gestor}"):
+        df_gestor = df_agrupado[df_agrupado['GESTOR'] == gestor]
+        
+        # Número de especialistas
+        st.write(f"**Número de Especialistas:** {len(df_gestor)}")
+        
+        for _, row in df_gestor.iterrows():
+            especialista = row['ESPECIALISTA']
+            cidade_base = row['CIDADE_BASE']
+            lat, lon = row['Latitude'], row['Longitude']
+            unidades = [u.strip() for u in row['UNIDADE_normalized'].split(',')]
 
-                # Exibir card com as métricas
-                with st.expander(f"Especialista: {especialista} (Cidade Base: {cidade_base})"):
-                    cols = st.columns(3)
-                    cols[0].metric("Unidades Atendidas", len(unidades))
-                    if distancias_unidades:
-                        media = sum(d[1] for d in distancias_unidades) / len(distancias_unidades)
-                        max_dist = max(d[1] for d in distancias_unidades)
-                        cols[1].metric("Distância Média (km)", f"{media:.1f}")
-                        cols[2].metric("Distância Máxima (km)", f"{max_dist:.1f}")
-
-                    # Mostrar tabela com distâncias por unidade
-                    df_dist = pd.DataFrame(distancias_unidades, columns=['Unidade', 'Distância (km)'])
-                    st.table(df_dist.style.format({'Distância (km)': '{:.2f}'}))
+            # Calcular distâncias para cada unidade
+            distancias_unidades = []
+            for unidade in unidades:
+                gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
+                if not gdf_unidade.empty:
+                    centroide = gdf_unidade.iloc[0]['centroide']
+                    dist_km = haversine(lon, lat, centroide.x, centroide.y)
+                    distancias_unidades.append((unidade, dist_km))
+            
+            # Exibir card do especialista com as métricas
+            with st.expander(f"Especialista: {especialista} (Cidade Base: {cidade_base})"):
+                cols = st.columns(3)
+                cols[0].metric("Unidades Atendidas", len(unidades))
+                if distancias_unidades:
+                    media = sum(d[1] for d in distancias_unidades) / len(distancias_unidades)
+                    max_dist = max(d[1] for d in distancias_unidades)
+                    cols[1].metric("Distância Média (km)", f"{media:.1f}")
+                    cols[2].metric("Distância Máxima (km)", f"{max_dist:.1f}")
+                
+                df_dist = pd.DataFrame(distancias_unidades, columns=['Unidade', 'Distância (km)'])
+                st.table(df_dist.style.format({'Distância (km)': '{:.2f}'}))
 
             # Criar mapa ao final, só com os especialistas filtrados
             centro_mapa = [df_analistas['Latitude'].mean(), df_analistas['Longitude'].mean()]
