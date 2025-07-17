@@ -5,7 +5,6 @@ import folium
 from folium.plugins import MarkerCluster
 import math
 import pandas as pd
-import numpy as np
 from streamlit_folium import st_folium
 
 # Configuração da página
@@ -25,6 +24,14 @@ if uploaded_kml and uploaded_table:
         # Ler o arquivo KML
         gdf = gpd.read_file(uploaded_kml, driver='KML')
 
+        # Exibir metadados do KML para depuração
+        st.subheader("Metadados do KML")
+        st.write("Valores únicos na coluna 'Name' do KML:")
+        st.write(gdf['Name'].unique().tolist())
+
+        # Normalizar nomes das unidades no KML
+        gdf['Name_normalized'] = gdf['Name'].str.strip().str.upper()
+
         # Ler a tabela de analistas (Excel)
         df_analistas = pd.read_excel(uploaded_table)
 
@@ -40,6 +47,9 @@ if uploaded_kml and uploaded_table:
         except Exception as e:
             st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude, longitude'.")
             st.stop()
+
+        # Normalizar nomes das unidades no Excel
+        df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].str.strip().str.upper()
 
         # Função para determinar a zona UTM com base na longitude
         def get_utm_zone(longitude):
@@ -78,7 +88,7 @@ if uploaded_kml and uploaded_table:
         for idx, row in df_analistas.iterrows():
             especialista = row['ESPECIALISTA']
             cidade_base = row['CIDADE_BASE']
-            unidades = row['UNIDADE'].split(',') if ',' in row['UNIDADE'] else [row['UNIDADE']]
+            unidades = row['UNIDADE_normalized'].split(',') if ',' in row['UNIDADE_normalized'] else [row['UNIDADE_normalized']]
             lat = row['Latitude']
             lon = row['Longitude']
 
@@ -91,7 +101,7 @@ if uploaded_kml and uploaded_table:
 
             for unidade in unidades:
                 unidade = unidade.strip()
-                gdf_unidade = gdf[gdf['Name'] == unidade]
+                gdf_unidade = gdf[gdf['Name_normalized'] == unidade]
                 if not gdf_unidade.empty:
                     centroide = gdf_unidade.iloc[0]['centroide']
                     dist_km = haversine(lon, lat, centroide.x, centroide.y)
@@ -112,7 +122,7 @@ if uploaded_kml and uploaded_table:
                     ).add_to(m)
                 else:
                     popup_text += f"<b>Unidade {unidade}:</b> Não encontrada no KML<br>"
-                    st.warning(f"Unidade {unidade} não encontrada no KML.")
+                    st.warning(f"Unidade {unidade} não encontrada no KML. Verifique se o nome corresponde aos valores em 'Name' do KML.")
 
             # Adicionar círculo de raio de atuação
             folium.Circle(
