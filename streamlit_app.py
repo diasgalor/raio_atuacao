@@ -9,6 +9,9 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 
+# Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
+st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+
 # CSS para design minimalista
 st.markdown("""
     <style>
@@ -51,8 +54,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Configuração da página
-st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+# Título e descrição
 st.title("📍 Raio de Atuação dos Analistas")
 st.markdown("Selecione um gestor e especialista para visualizar as unidades atendidas e o raio de atuação no mapa.", unsafe_allow_html=True)
 
