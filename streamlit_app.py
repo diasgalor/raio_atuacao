@@ -44,16 +44,6 @@ st.markdown("""
         margin-bottom: 15px;
         padding: 15px;
     }
-    .chart-container {
-        background-color: #ffffff;
-        border: 2px solid #2196F3;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        padding: 0;
-        margin: 0;
-        width: 100%;
-        height: auto;
-    }
     .stMarkdown h3 {
         color: #333333;
         font-size: 18px;
@@ -276,16 +266,15 @@ if kml_file and xlsx_file:
                     lons = []
                     for _, row in df_final.iterrows():
                         unidades.extend(row['UNIDADES_ATENDIDAS'])
-                        distancias.extend(row['DETALHES'])
+                        distancias.extend([(row['ESPECIALISTA'], unidade, dist) for unidade, dist in row['DETALHES']])
                         if row['GEOMETRIES'] is not None:
                             geometries.extend(row['GEOMETRIES'])
                         lats.append(row['LAT'])
                         lons.append(row['LON'])
 
                     unidades = list(set(unidades))
-                    distancias = list(set(distancias))
-                    medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
-                    max_dist = max([d[1] for d in distancias]) if distancias else 0
+                    medias = sum([d[2] for d in distancias]) / len(distancias) if distancias else 0
+                    max_dist = max([d[2] for d in distancias]) if distancias else 0
                     lat_central = sum(lats) / len(lats) if lats else 0
                     lon_central = sum(lons) / len(lons) if lons else 0
 
@@ -307,7 +296,12 @@ if kml_file and xlsx_file:
                     (resultados['GESTOR'] == gestor_selecionado) &
                     (resultados['ESPECIALISTA'] == especialista_selecionado)
                 ]
-                consolidated_data = df_final.iloc[0].to_dict() if not df_final.empty else None
+                if not df_final.empty:
+                    row = df_final.iloc[0].to_dict()
+                    row['DETALHES'] = [(row['ESPECIALISTA'], unidade, dist) for unidade, dist in row['DETALHES']]
+                    consolidated_data = row
+                else:
+                    consolidated_data = None
 
             if consolidated_data:
                 row = consolidated_data
@@ -315,47 +309,15 @@ if kml_file and xlsx_file:
                     st.markdown(f"**Unidades Atendidas:** {len(row['UNIDADES_ATENDIDAS'])}")
                     st.markdown(f"**Distância Média:** {row['DIST_MEDIA']} km")
                     st.markdown(f"**Raio de Atuação (Máxima):** {row['DIST_MAX']} km")
-                    st.markdown("**Especialistas Associados:**")
-                    especialistas_associados = resultados[resultados['UNIDADES_ATENDIDAS'].apply(lambda x: any(unidade in x for unidade in row['UNIDADES_ATENDIDAS']))]['ESPECIALISTA'].unique()
-                    st.write(', '.join(especialistas_associados))
                     st.markdown("**Detalhes das Unidades:**")
-                    detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
-                    st.table(detalhes_df)
-
-                # Opção para exibir o gráfico
-                if st.checkbox("Mostrar Gráfico de Distâncias", value=False):
-                    if especialista_selecionado == 'Todos':
-                        df_plot = pd.DataFrame()
-                        for _, row in resultados[resultados['GESTOR'] == gestor_selecionado].iterrows():
-                            for unidade, distancia in row['DETALHES']:
-                                df_plot = pd.concat([df_plot, pd.DataFrame({
-                                    'Unidade': [unidade],
-                                    'Distância (km)': [round(distancia)],
-                                    'Especialista': [row['ESPECIALISTA']]
-                                })])
-                        if not df_plot.empty:
-                            df_plot = df_plot.sort_values('Distância (km)', ascending=False).head(10)
-                            with st.expander("Gráfico de Distâncias", expanded=True):
-                                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                                st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='Especialista', use_container_width=True)
-                                st.markdown('</div>', unsafe_allow_html=True)
-                        else:
-                            st.warning("Nenhum dado disponível para o gestor selecionado.")
-                    else:
-                        df_especialista = resultados[
-                            (resultados['GESTOR'] == gestor_selecionado) &
-                            (resultados['ESPECIALISTA'] == especialista_selecionado)
-                        ]
-                        if not df_especialista.empty:
-                            df_plot = pd.DataFrame(df_especialista.iloc[0]['DETALHES'], columns=['Unidade', 'Distância (km)'])
-                            df_plot['Distância (km)'] = df_plot['Distância (km)'].apply(round)
-                            df_plot = df_plot.sort_values('Distância (km)', ascending=False)
-                            with st.expander("Gráfico de Distâncias", expanded=True):
-                                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-                                st.bar_chart(df_plot, x='Unidade', y='Distância (km)', color='#2196F3', use_container_width=True)
-                                st.markdown('</div>', unsafe_allow_html=True)
-                        else:
-                            st.warning("Nenhum dado disponível para o especialista selecionado.")
+                    
+                    # Criar DataFrame com coluna de especialista e ordenar por distância crescente
+                    detalhes_df = pd.DataFrame(
+                        row['DETALHES'], 
+                        columns=['Especialista', 'Unidade', 'Distância (km)']
+                    ).sort_values('Distância (km)')
+                    
+                    st.table(detalhes_df[['Especialista', 'Unidade', 'Distância (km)']])
 
                 # Criação do mapa
                 m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
