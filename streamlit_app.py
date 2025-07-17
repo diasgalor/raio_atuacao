@@ -3,116 +3,88 @@ import pandas as pd
 import geopandas as gpd
 import folium
 from folium.plugins import MarkerCluster
-from streamlit_folium import st_folium
-import xml.etree.ElementTree as ET
 from shapely.geometry import Point
-import math
-from unidecode import unidecode
+from streamlit_folium import st_folium
 
 # Configuração da página
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
+
 st.title("📍 Raio de Atuação dos Analistas")
+st.markdown("Faça upload do **arquivo KML** da localização das unidades e da **planilha Excel** com analistas e gestores.")
 
-# Função para normalizar texto
-def normalize_str(s):
-    return unidecode(str(s).strip().upper())
+# Upload de arquivos
+kml_file = st.file_uploader("📂 Faça upload do arquivo KML", type=['kml'])
+xlsx_file = st.file_uploader("📊 Faça upload da tabela de analistas (Excel)", type=['xlsx', 'xls'])
 
-# Função para converter coordenadas do KML
-def parse_kml(file):
-    tree = ET.parse(file)
-    root = tree.getroot()
-    namespace = {"kml": "http://www.opengis.net/kml/2.2"}
+if kml_file and xlsx_file:
+    try:
+        # Leitura do KML
+        gdf_kml = gpd.read_file(kml_file, driver='KML')
+        gdf_kml['geometry'] = gdf_kml['geometry'].to_crs(epsg=4326)  # Garante CRS
+        gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.centroid.x, p.centroid.y]))
+        gdf_kml['UNIDADE_normalized'] = gdf_kml['Name'].str.upper().str.strip()
 
-    data = []
-    for placemark in root.findall(".//kml:Placemark", namespace):
-        name_elem = placemark.find("kml:name", namespace)
-        name = name_elem.text if name_elem is not None else ""
+        # Leitura da planilha de analistas
+        df_analistas = pd.read_excel(xlsx_file)
+        df_analistas.columns = df_analistas.columns.str.upper()
+        df_analistas['UNIDADE'] = df_analistas['UNIDADE'].str.upper().str.strip()
+        df_analistas['ESPECIALISTA'] = df_analistas['ESPECIALISTA'].str.strip().str.upper()
+        df_analistas['GESTOR'] = df_analistas['GESTOR'].str.strip().str.upper()
+        df_analistas['CIDADE_BASE'] = df_analistas['CIDADE_BASE'].str.upper()
 
-        coord_elem = placemark.find(".//kml:coordinates", namespace)
-        if coord_elem is not None:
-            coords_text = coord_elem.text.strip()
-            lon, lat, *_ = map(float, coords_text.split(","))
-            data.append({
-                "UNIDADE": normalize_str(name),
-                "Latitude": lat,
-                "Longitude": lon
+        # Junta coordenadas da unidade
+        df_merge = df_analistas.merge(gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude']], left_on='UNIDADE', right_on='UNIDADE_normalized', how='left')
+        df_merge = df_merge.dropna(subset=['Latitude', 'Longitude'])
+
+        # Agrupa e calcula distâncias por especialista
+        gdf_base = df_merge.drop_duplicates(subset=['ESPECIALISTA', 'Latitude', 'Longitude'])
+        gdf_base['base_point'] = gdf_base.apply(lambda row: Point(row['Longitude'], row['Latitude']), axis=1)
+
+        resultados = []
+        for (gestor, esp), df_sub in df_merge.groupby(['GESTOR', 'ESPECIALISTA']):
+            cidade_base = df_sub['CIDADE_BASE'].iloc[0]
+            base_coords = df_sub[['Latitude', 'Longitude']].iloc[0]
+
+            distancias = []
+            for _, row in df_sub.iterrows():
+                dist = ((row['Latitude'] - base_coords[0])**2 + (row['Longitude'] - base_coords[1])**2)**0.5 * 111  # Aproximação
+                distancias.append((row['UNIDADE'], dist))
+
+            unidades = list(set([d[0] for d in distancias]))
+            medias = sum([d[1] for d in distancias]) / len(distancias)
+            max_dist = max([d[1] for d in distancias])
+
+            resultados.append({
+                'GESTOR': gestor,
+                'ESPECIALISTA': esp,
+                'CIDADE_BASE': cidade_base,
+                'UNIDADES_ATENDIDAS': unidades,
+                'DIST_MEDIA': round(medias, 1),
+                'DIST_MAX': round(max_dist, 1),
+                'DETALHES': distancias
             })
 
-    return pd.DataFrame(data)
+        # Interface: seleção por gestor → especialista
+        gestores = sorted(set([r['GESTOR'] for r in resultados]))
+        gestor_selecionado = st.selectbox("👨‍💼 Selecione o Gestor", options=gestores)
 
-# Upload dos arquivos
-kml_file = st.file_uploader("📂 Faça upload do arquivo KML", type="kml")
-excel_file = st.file_uploader("📂 Faça upload da tabela de analistas (Excel)", type=["xlsx", "xls"])
+        especialistas_filtrados = [r for r in resultados if r['GESTOR'] == gestor_selecionado]
+        nomes_especialistas = [r['ESPECIALISTA'] for r in especialistas_filtrados]
 
-if kml_file and excel_file:
-    try:
-        # Processa KML
-        df_kml = parse_kml(kml_file)
-        df_kml["UNIDADE_normalized"] = df_kml["UNIDADE"].apply(normalize_str)
+        especialistas_selecionados = st.multiselect("👨‍🔬 Selecione os Especialistas", options=nomes_especialistas, default=nomes_especialistas)
 
-        # Processa Excel
-        df_analistas = pd.read_excel(excel_file)
-        for col in ['UNIDADE', 'ESPECIALISTA', 'GESTOR', 'CIDADE_BASE']:
-            df_analistas[col] = df_analistas[col].astype(str).apply(normalize_str)
-        df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
-
-        # Junta com coordenadas
-        df_joined = pd.merge(df_analistas, df_kml, on="UNIDADE_normalized", how="left")
-
-        # Agrupa para remover duplicações por unidade
-        df_agrupado = (
-            df_joined
-            .groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'Latitude', 'Longitude'])
-            .agg(UNIDADES=('UNIDADE', lambda x: list(set(x))),
-                 QTD=('UNIDADE', lambda x: len(set(x))))
-            .reset_index()
-        )
-
-        # Interface com seleção
-        gestores_disponiveis = sorted(df_agrupado['GESTOR'].unique())
-        gestor_selecionado = st.selectbox("👤 Selecione o GESTOR", gestores_disponiveis)
-
-        df_filtrado = df_agrupado[df_agrupado['GESTOR'] == gestor_selecionado]
-
-        especialistas = sorted(df_filtrado['ESPECIALISTA'].unique())
-        especialistas_selecionados = st.multiselect(
-            "👨‍🔧 Selecione um ou mais Especialistas (ou deixe vazio para todos)",
-            especialistas
-        )
-
-        if especialistas_selecionados:
-            df_final = df_filtrado[df_filtrado["ESPECIALISTA"].isin(especialistas_selecionados)]
-        else:
-            df_final = df_filtrado
-
-        # Mapa
-        m = folium.Map(location=[-12, -54], zoom_start=5)
-        marker_cluster = MarkerCluster().add_to(m)
-
-        for _, row in df_final.iterrows():
-            for unidade in row['UNIDADES']:
-                lat = row['Latitude']
-                lon = row['Longitude']
-                popup_text = (
-                    f"<b>Gestor:</b> {row['GESTOR']}<br>"
-                    f"<b>Especialista:</b> {row['ESPECIALISTA']}<br>"
-                    f"<b>Unidade:</b> {unidade}<br>"
-                    f"<b>Cidade Base:</b> {row['CIDADE_BASE']}"
-                )
-                folium.Marker(location=[lat, lon], popup=popup_text).add_to(marker_cluster)
-
-        st.subheader(f"🗺️ Mapa das Unidades Atendidas ({len(df_final)} especialistas)")
-        st_data = st_folium(m, width=1000, height=600)
-
-        # Tabela resumo
-        for _, row in df_final.iterrows():
-            with st.expander(f"🔎 {row['ESPECIALISTA']} - {row['CIDADE_BASE']}"):
-                unidades = row['UNIDADES']
-                num = len(unidades)
-                st.markdown(f"**Unidades Atendidas:** {num}")
-                st.table(pd.DataFrame({'Unidade': unidades}))
+        # Exibição
+        for r in especialistas_filtrados:
+            if r['ESPECIALISTA'] in especialistas_selecionados:
+                with st.container():
+                    st.markdown(f"### 👤 Especialista: `{r['ESPECIALISTA']}`")
+                    st.markdown(f"📍 Cidade Base: **{r['CIDADE_BASE']}**")
+                    st.markdown(f"🏢 Unidades Atendidas: **{len(r['UNIDADES_ATENDIDAS'])}**")
+                    st.markdown(f"📏 Distância Média: **{r['DIST_MEDIA']} km**")
+                    st.markdown(f"📏 Distância Máxima: **{r['DIST_MAX']} km**")
+                    st.dataframe(pd.DataFrame(r['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)'))
 
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {e}")
 else:
-    st.info("🔁 Aguarde o upload do KML e da planilha de analistas para continuar.")
+    st.info("🔄 Aguarde o upload dos arquivos KML e Excel para continuar.")
