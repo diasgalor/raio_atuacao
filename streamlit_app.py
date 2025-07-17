@@ -167,7 +167,20 @@ if uploaded_kml and uploaded_table:
         gestores = df_analistas['GESTOR'].unique()
         for gestor in gestores:
             with st.expander(f"Gestor: {gestor}"):
-                especialistas = df_analistas[df_analistas['GESTOR'] == gestor][['ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'Latitude', 'Longitude']]
+                # Adiciona validação da coluna UNIDADE
+if 'UNIDADE' not in df_analistas.columns or df_analistas['UNIDADE'].isna().all():
+    st.error("A coluna 'UNIDADE' está vazia ou ausente na planilha. Verifique o conteúdo.")
+    st.stop()
+
+# Garante que a coluna UNIDADE_normalized foi criada corretamente
+df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(formatar_nome)
+
+# Seleciona colunas com os campos normalizados incluídos
+especialistas = df_analistas[df_analistas['GESTOR'] == gestor][
+    ['ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'UNIDADE_normalized', 'Latitude', 'Longitude'] +
+    (['FAZENDA_normalized'] if 'FAZENDA_normalized' in df_analistas.columns else [])
+]
+
                 for idx, row in especialistas.iterrows():
                     especialista = row['ESPECIALISTA']
                     cidade_base = row['CIDADE_BASE']
