@@ -168,9 +168,19 @@ if uploaded_kml and uploaded_table:
         for gestor in gestores:
             with st.expander(f"Gestor: {gestor}"):
                 # Adiciona validação da coluna UNIDADE
-if 'UNIDADE' not in df_analistas.columns or df_analistas['UNIDADE'].isna().all():
-    st.error("A coluna 'UNIDADE' está vazia ou ausente na planilha. Verifique o conteúdo.")
-    st.stop()
+with st.container():
+    # Verifica se a coluna 'UNIDADE' existe e se todos os valores estão ausentes
+    if 'UNIDADE' not in df_analistas.columns or df_analistas['UNIDADE'].isna().all():
+        st.error("A coluna 'UNIDADE' está vazia ou ausente na planilha. Verifique o conteúdo.")
+        st.stop()
+
+    # Cria uma nova coluna com nomes padronizados de unidade para evitar erro de comparação
+    df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].str.strip().str.upper()
+
+    # Se existir a coluna 'FAZENDA', criar também uma versão normalizada
+    if 'FAZENDA' in df_analistas.columns:
+        df_analistas['FAZENDA_normalized'] = df_analistas['FAZENDA'].str.strip().str.upper()
+
 
 # Garante que a coluna UNIDADE_normalized foi criada corretamente
 df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(formatar_nome)
