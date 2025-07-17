@@ -10,10 +10,26 @@ from unidecode import unidecode
 import xml.etree.ElementTree as ET
 from streamlit_folium import st_folium
 
+# Exibir importações na sidebar
+st.sidebar.title("Importações")
+st.sidebar.code("""
+import streamlit as st
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point
+from shapely.ops import unary_union
+import folium
+from folium.plugins import MarkerCluster
+import math
+from unidecode import unidecode
+import xml.etree.ElementTree as ET
+from streamlit_folium import st_folium
+""")
+
 # Configuração da página (DEVE SER A PRIMEIRA INSTRUÇÃO)
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
-# CSS para design minimalista com cards destacados
+# CSS para design minimalista com blocos destacados
 st.markdown("""
     <style>
     body {
@@ -29,6 +45,7 @@ st.markdown("""
         border: 1px solid #e0e0e0;
         border-radius: 5px;
         padding: 10px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
     .stExpander {
         background-color: #fafafa;
@@ -36,7 +53,15 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         margin-bottom: 15px;
-        padding: 10px;
+        padding: 15px;
+    }
+    .chart-container {
+        background-color: #ffffff;
+        border: 2px solid #2196F3;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        padding: 15px;
+        margin-bottom: 15px;
     }
     .stMarkdown h3 {
         color: #333333;
@@ -101,7 +126,7 @@ def extrair_dados_kml(kml_content):
                 coords_text = point_elem.text.strip()
                 coords = tuple(map(float, coords_text.split(',')))
                 try:
-                    geometry = Point(coords[0], c[1])
+                    geometry = Point(coords[0], coords[1])
                 except Exception as geom_e:
                     st.warning(f"Erro ao criar geometria para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")
                     geometry = None
@@ -166,11 +191,12 @@ if kml_file and xlsx_file:
             st.error(f"O arquivo Excel está faltando as colunas: {', '.join(missing_columns)}")
             st.stop()
 
-        # Processar coordenadas
+        # Processar coordenadas, removendo aspas simples
         try:
+            df_analistas['COORDENADAS_CIDADE'] = df_analistas['COORDENADAS_CIDADE'].str.lstrip("'")
             df_analistas[['LAT', 'LON']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
         except Exception as e:
-            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude, longitude'.")
+            st.error("Erro ao processar COORDENADAS_CIDADE. Use o formato 'latitude,longitude' ou '\'latitude,longitude'.") 
             st.stop()
 
         df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(normalize_str)
@@ -241,15 +267,25 @@ if kml_file and xlsx_file:
 
         resultados = pd.DataFrame(resultados)
 
-        # Interface: seleção por gestor → especialista
-        col1, col2 = st.columns([1, 1], gap="small")
+        # Interface: seleção por gestor e especialista + gráfico de distribuição
+        col1, col2 = st.columns([1, 1], gap="medium")
         with col1:
+            st.markdown("### Seleção")
             gestores = sorted(resultados['GESTOR'].unique())
             gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
-        with col2:
             especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
             nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
+        
+        with col2:
+            st.markdown("### Distribuição de Distâncias por Especialista")
+            dist_chart_data = resultados[resultados['GESTOR'] == gestor_selecionado][['ESPECIALISTA', 'DIST_MAX']].set_index('ESPECIALISTA')['DIST_MAX'].sort_values(ascending=False)
+            if not dist_chart_data.empty:
+                st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                st.bar_chart(dist_chart_data, color='#2196F3')
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.warning("Nenhum dado disponível para o gestor selecionado.")
 
         # Filtra o DataFrame
         if especialista_selecionado == 'Todos':
@@ -307,7 +343,7 @@ if kml_file and xlsx_file:
                 detalhes_df = pd.DataFrame(row['DETALHES'], columns=['Unidade', 'Distância (km)']).sort_values('Distância (km)', ascending=False)
                 st.table(detalhes_df)
 
-                # Gráfico de barras
+                # Gráfico de barras das distâncias das unidades
                 st.markdown("**Maiores Distâncias:**")
                 chart_data = detalhes_df.set_index('Unidade')['Distância (km)']
                 st.bar_chart(chart_data, color='#2196F3')
