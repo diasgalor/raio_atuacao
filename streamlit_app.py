@@ -430,8 +430,9 @@ if kml_file and xlsx_file:
                     popup=f"Raio de atuação: {row['DIST_MAX']} km"
                 ).add_to(m)
 
-                st.subheader("Mapa")
-                st_folium(m, width=100, height=500)  # Aumentado de 400px para 500px
+                with st.container():
+    st.subheader("Mapa")
+    st_folium(m, width=None, height=500, use_container_width=True)
 
             else:
                 st.warning("Nenhum dado encontrado para o especialista selecionado.")
