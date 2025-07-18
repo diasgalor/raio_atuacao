@@ -496,11 +496,14 @@ if kml_file and xlsx_file:
                 unsafe_allow_html=True
             )
     except Exception as e:
-        st.markdown(
-            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-            f'❌ Erro ao processar os arquivos: {str(e)}'
-            f'</div>',
-            unsafe_allow_html=True
+    st.markdown(
+        f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+        f'❌ Erro ao processar os arquivos: {str(e)}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.info("ℹ️ Por favor, faça upload dos arquivos KML e Excel na barra lateral para continuar.")e
         )
 elseI apologize for the inconvenience. It seems there was an issue with the code formatting in my previous response. The `else` block at the end of the provided code snippet was incomplete due to a truncation error. Below, I’ve corrected this by providing the complete, updated `streamlit_app.py` with the requested changes: removing the bar chart from the "Análise Avançada de Cidade Mais Próxima" section while keeping the map, cards, and tables, and ensuring the rest of the code remains unchanged. The `else` block is now properly included, and the code is fully functional based on your provided version.
 
