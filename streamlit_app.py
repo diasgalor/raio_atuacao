@@ -22,8 +22,8 @@ st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # Upload de arquivos na sidebar
 st.sidebar.header("Upload de Arquivos")
-kml_file = st.sidebar.file_uploader("📂 Upload KML", type=['kml'])
-xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=['xlsx', 'xls'])
+kml_file = st.sidebar.file_uploader("📂 Upload KML", type=["kml"])
+xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=["xlsx", "xls"])
 
 # Layout responsivo e cores suaves
 st.markdown("""
@@ -342,7 +342,7 @@ if kml_file and xlsx_file:
                                     style_function=lambda x, color=color: {'fillColor': color, 'color': color, 'fillOpacity': 0.13, 'weight': 2}
                                 ).add_to(m)
                     st.subheader("Mapa")
-                    st_folium(m, width=None, height=530, use_container_width=True)
+                    st_folium(m, height=400, use_container_width=True)
             else:
                 row = resultados_filtrados.iloc[0].to_dict()
                 with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
@@ -390,7 +390,7 @@ if kml_file and xlsx_file:
                         popup=f"Raio de atuação: {row['DIST_MAX']} km"
                     ).add_to(m)
                     st.subheader("Mapa")
-                    st_folium(m, width=None, height=530, use_container_width=True)
+                    st_folium(m, height=400, use_container_width=True)
         else:
             st.warning("Nenhum dado encontrado para o filtro selecionado.")
     except Exception as e:
@@ -408,7 +408,7 @@ show_import = st.sidebar.checkbox("👁️ Exibir barra de importação (GeoJSON
 geojson_file = None
 if show_import:
     st.sidebar.markdown("### (Opcional) Cidade mais próxima")
-    geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=['geojson'])
+    geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=["geojson"])
 
 if kml_file and xlsx_file and geojson_file:
     try:
@@ -557,3 +557,5 @@ else:
     st.info("ℹ️ Para a análise de cidade mais próxima, faça upload dos arquivos KML, Excel e GeoJSON de cidades.")
 
 # ====================== FIM DO BLOCO DE ANÁLISE DE CIDADE MAIS PRÓXIMA (DETALHADO) ======================
+
+
