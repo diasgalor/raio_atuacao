@@ -112,7 +112,7 @@ st.markdown("""
 
 # Título e descrição
 st.title("📍 Raio de Atuação dos Analistas")
-st.markdown("Selecione um gestor e especialista (ou 'Todos') para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa.")
+st.markdown("Selecione um gestor, especialista e fazenda (ou 'Todos') para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa.")
 
 # Função para extrair metadados e geometria do KML
 def extrair_dados_kml(kml_content):
@@ -230,7 +230,9 @@ if kml_file and xlsx_file:
         df_analistas['CIDADE_BASE'] = df_analistas['CIDADE_BASE'].apply(normalize_str)
 
         # Verificar coluna FAZENDA
+        fazenda_exists = False
         if 'FAZENDA' in df_analistas.columns:
+            fazenda_exists = True
             df_analistas['FAZENDA_normalized'] = df_analistas['FAZENDA'].apply(normalize_str)
             st.write("Coluna FAZENDA encontrada no Excel. Usando para correspondência.")
 
@@ -244,8 +246,11 @@ if kml_file and xlsx_file:
             c = 2 * math.asin(math.sqrt(a))
             return R * c
 
-        # Agrupar unidades no Excel por especialista
-        df_analistas = df_analistas.groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON'])['UNIDADE_normalized'].apply(set).reset_index()
+        # Agrupar unidades no Excel por especialista (e fazenda, se existir)
+        group_cols = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON']
+        if fazenda_exists:
+            group_cols.append('FAZENDA_normalized')
+        df_analistas = df_analistas.groupby(group_cols)['UNIDADE_normalized'].apply(set).reset_index()
         df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE_normalized'].apply(list)
 
         # Junta coordenadas da unidade
@@ -256,9 +261,18 @@ if kml_file and xlsx_file:
         )
         df_merge = df_merge.dropna(subset=['Latitude', 'Longitude'])
 
-        # Agrupa por especialista
+        # Agrupa por especialista (e fazenda, se existir)
+        if fazenda_exists:
+            group_cols_result = ['GESTOR', 'ESPECIALISTA', 'FAZENDA_normalized']
+        else:
+            group_cols_result = ['GESTOR', 'ESPECIALISTA']
         resultados = []
-        for (gestor, esp), df_sub in df_merge.groupby(['GESTOR', 'ESPECIALISTA']):
+        for keys, df_sub in df_merge.groupby(group_cols_result):
+            if fazenda_exists:
+                gestor, esp, fazenda = keys
+            else:
+                gestor, esp = keys
+                fazenda = 'Todos'
             cidade_base = df_sub['CIDADE_BASE'].iloc[0]
             base_coords = df_sub[['LAT', 'LON']].iloc[0]
             unidades = list(set(df_sub['UNIDADE_normalized'].dropna()))
@@ -280,6 +294,7 @@ if kml_file and xlsx_file:
             resultados.append({
                 'GESTOR': gestor,
                 'ESPECIALISTA': esp,
+                'FAZENDA': fazenda,
                 'CIDADE_BASE': cidade_base,
                 'LAT': base_coords['LAT'],
                 'LON': base_coords['LON'],
@@ -292,7 +307,7 @@ if kml_file and xlsx_file:
 
         resultados = pd.DataFrame(resultados)
 
-        # Interface: seleção por gestor e especialista
+        # Interface: seleção por gestor, especialista e fazenda
         col1, col2 = st.columns([1, 1], gap="medium")
         with col1:
             st.markdown("### Seleção")
@@ -301,12 +316,29 @@ if kml_file and xlsx_file:
             especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
             nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
+            
+            # Fazenda: só mostra se existir a coluna
+            if fazenda_exists:
+                if especialista_selecionado == 'Todos':
+                    fazendas_disponiveis = ['Todos'] + sorted(especialistas_filtrados['FAZENDA'].unique())
+                else:
+                    fazendas_disponiveis = ['Todos'] + sorted(especialistas_filtrados[especialistas_filtrados['ESPECIALISTA'] == especialista_selecionado]['FAZENDA'].unique())
+                fazenda_selecionada = st.selectbox("Fazenda", options=fazendas_disponiveis, format_func=lambda x: x.title() if isinstance(x, str) else x)
+            else:
+                fazenda_selecionada = 'Todos'
 
-        # Exibir card do especialista
+        # Exibir card do especialista/fazenda
         if kml_file and xlsx_file:
-            if especialista_selecionado == 'Todos':
-                df_final = resultados[resultados['GESTOR'] == gestor_selecionado]
-                if not df_final.empty:
+            # Filtros dinâmicos
+            base_mask = (resultados['GESTOR'] == gestor_selecionado)
+            if especialista_selecionado != 'Todos':
+                base_mask = base_mask & (resultados['ESPECIALISTA'] == especialista_selecionado)
+            if fazenda_exists and fazenda_selecionada != 'Todos':
+                base_mask = base_mask & (resultados['FAZENDA'] == fazenda_selecionada)
+            df_final = resultados[base_mask]
+
+            if not df_final.empty:
+                if especialista_selecionado == 'Todos' or (fazenda_exists and fazenda_selecionada == 'Todos'):
                     unidades = []
                     distancias = []
                     geometries = []
@@ -314,7 +346,7 @@ if kml_file and xlsx_file:
                     lons = []
                     for _, row in df_final.iterrows():
                         unidades.extend(row['UNIDADES_ATENDIDAS'])
-                        distancias.extend([(row['ESPECIALISTA'], unidade, round(dist, 1)) for unidade, dist in row['DETALHES']])
+                        distancias.extend([(row['ESPECIALISTA'], row['FAZENDA'], unidade, round(dist, 1)) for unidade, dist in row['DETALHES']])
                         if row['GEOMETRIES'] is not None:
                             geometries.extend(row['GEOMETRIES'])
                         lats.append(row['LAT'])
@@ -322,13 +354,14 @@ if kml_file and xlsx_file:
 
                     unidades = list(set(unidades))
                     distancias = list(set(distancias))
-                    medias = sum([d[2] for d in distancias]) / len(distancias) if distancias else 0
-                    max_dist = max([d[2] for d in distancias]) if distancias else 0
+                    medias = sum([d[3] for d in distancias]) / len(distancias) if distancias else 0
+                    max_dist = max([d[3] for d in distancias]) if distancias else 0
                     lat_central = sum(lats) / len(lats) if lats else 0
                     lon_central = sum(lons) / len(lons) if lons else 0
 
                     consolidated_data = {
                         'ESPECIALISTA': 'Todos',
+                        'FAZENDA': 'Todos',
                         'CIDADE_BASE': 'Consolidado',
                         'LAT': lat_central,
                         'LON': lon_central,
@@ -339,22 +372,16 @@ if kml_file and xlsx_file:
                         'GEOMETRIES': geometries if geometries else None
                     }
                 else:
-                    consolidated_data = None
-            else:
-                df_final = resultados[
-                    (resultados['GESTOR'] == gestor_selecionado) &
-                    (resultados['ESPECIALISTA'] == especialista_selecionado)
-                ]
-                if not df_final.empty:
                     row = df_final.iloc[0].to_dict()
-                    row['DETALHES'] = [(row['ESPECIALISTA'], unidade, round(dist, 1)) for unidade, dist in row['DETALHES']]
+                    # Adapta detalhes para incluir FAZENDA
+                    row['DETALHES'] = [(row['ESPECIALISTA'], row['FAZENDA'], unidade, round(dist, 1)) for unidade, dist in row['DETALHES']]
                     consolidated_data = row
-                else:
-                    consolidated_data = None
+            else:
+                consolidated_data = None
 
             if consolidated_data:
                 row = consolidated_data
-                with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
+                with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row.get('FAZENDA', 'Todos').title()} - {row['CIDADE_BASE'].title()}", expanded=True):
                     # Layout de métricas em cards
                     col1, col2, col3 = st.columns(3)
                     
@@ -377,12 +404,13 @@ if kml_file and xlsx_file:
                     st.markdown("**Detalhes por Unidade**")
                     detalhes_df = pd.DataFrame(
                         row['DETALHES'], 
-                        columns=['Especialista', 'Unidade', 'Distância (km)']
+                        columns=['Especialista', 'Fazenda', 'Unidade', 'Distância (km)']
                     )
                     st.dataframe(
                         detalhes_df,
                         column_config={
                             "Especialista": st.column_config.TextColumn("Especialista", width="medium"),
+                            "Fazenda": st.column_config.TextColumn("Fazenda", width="medium"),
                             "Unidade": st.column_config.TextColumn("Unidade", width="large"),
                             "Distância (km)": st.column_config.NumberColumn(
                                 "Distância (km)",
@@ -401,6 +429,7 @@ if kml_file and xlsx_file:
                 popup_text = (
                     f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
                     f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
+                    f"<b>Fazenda:</b> {row.get('FAZENDA', 'Todos').title()}<br>"
                     f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
                     f"<b>Unidades:</b> {', '.join(row['UNIDADES_ATENDIDAS'])}<br>"
                     f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km"
@@ -430,13 +459,13 @@ if kml_file and xlsx_file:
                     popup=f"Raio de atuação: {row['DIST_MAX']} km"
                 ).add_to(m)
 
-                                # Container para o mapa com margem superior
+                # Container para o mapa com margem superior
                 with st.container():
                     st.subheader("Mapa")
                     # Aumentando um pouco a altura do mapa e usando container width
                     st_folium(m, width=None, height=600, use_container_width=True)
             else:
-                st.warning("Nenhum dado encontrado para o especialista selecionado.")
+                st.warning("Nenhum dado encontrado para o filtro selecionado.")
     except Exception as e:
         st.error(f"Erro ao processar os arquivos: {str(e)}")
 else:
