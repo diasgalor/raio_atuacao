@@ -15,8 +15,15 @@ PASTEL_COLORS = [
     "#dcd3ff", "#baffea", "#ffd6e0", "#e2f0cb", "#b5ead7"
 ]
 
+# Configuração da página
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
+# Upload de arquivos na sidebar
+st.sidebar.header("Upload de Arquivos")
+kml_file = st.sidebar.file_uploader("📂 Upload KML", type=['kml'])
+xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=['xlsx', 'xls'])
+
+# Layout responsivo e cores suaves
 st.markdown("""
    <style>
    html, body, .stApp {
@@ -211,7 +218,6 @@ if kml_file and xlsx_file:
             c = 2 * math.asin(math.sqrt(a))
             return R * c
 
-        # Agrupar por gestor/especialista/base/unidade (cada unidade = fazenda)
         df_analistas_grouped = df_analistas.groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON'])['UNIDADE_normalized'].apply(set).reset_index()
         df_analistas_grouped['UNIDADE_normalized'] = df_analistas_grouped['UNIDADE_normalized'].apply(list)
 
@@ -256,7 +262,7 @@ if kml_file and xlsx_file:
             })
         resultados = pd.DataFrame(resultados)
 
-        # FILTROS
+        # Filtros
         is_mobile = st.sidebar.checkbox("Layout para celular?", value=False)
         col1, _ = (st.columns(1) if is_mobile else st.columns([1, 1], gap="medium"))
         with col1:
@@ -273,14 +279,12 @@ if kml_file and xlsx_file:
                 for ulist in especialistas_filtrados['UNIDADES_ATENDIDAS']:
                     unidades_filtradas.extend(ulist)
             else:
-                unidades_filtradas = []
                 for ulist in especialistas_filtrados[especialistas_filtrados['ESPECIALISTA'] == especialista_selecionado]['UNIDADES_ATENDIDAS']:
                     unidades_filtradas.extend(ulist)
             unidades_filtradas = sorted(list(set(unidades_filtradas)))
             fazenda_opcoes = ['Todos'] + [u.title() for u in unidades_filtradas]
             fazenda_selecionada = st.selectbox("Fazenda", options=fazenda_opcoes)
 
-        # FILTRAGEM DOS DADOS
         def unidade_match(unitlist):
             if fazenda_selecionada == 'Todos':
                 return True
@@ -293,12 +297,9 @@ if kml_file and xlsx_file:
         if fazenda_selecionada != 'Todos':
             resultados_filtrados = resultados_filtrados[resultados_filtrados['UNIDADES_ATENDIDAS'].apply(unidade_match)]
 
-        # DASHBOARD E MAPA
         if not resultados_filtrados.empty:
             if especialista_selecionado == 'Todos':
-                # Modo Consolidado: mapa com todos analistas coloridos
                 with st.expander("🔍 Todos os especialistas do gestor selecionado", expanded=True):
-                    # Métricas gerais
                     total_unidades = sum([len(row['UNIDADES_ATENDIDAS']) for _, row in resultados_filtrados.iterrows()])
                     dist_medias = [row["DIST_MEDIA"] for _, row in resultados_filtrados.iterrows()]
                     dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()]
@@ -308,7 +309,6 @@ if kml_file and xlsx_file:
                         cols[1].markdown(f'<div class="metric-card"><div class="metric-title">Distância Média Geral</div><div class="metric-value">{round(sum(dist_medias) / len(dist_medias),1) if dist_medias else 0} km</div></div>', unsafe_allow_html=True)
                         cols[2].markdown(f'<div class="metric-card"><div class="metric-title">Maior Raio</div><div class="metric-value">{max(dist_maximos) if dist_maximos else 0} km</div></div>', unsafe_allow_html=True)
 
-                    # Tabela detalhada
                     detalhes = []
                     for _, row in resultados_filtrados.iterrows():
                         for unidade, dist in row['DETALHES']:
@@ -317,7 +317,6 @@ if kml_file and xlsx_file:
                     st.markdown("**Detalhes por Especialista/Fazenda**")
                     st.dataframe(detalhes_df, hide_index=True, use_container_width=True)
 
-                    # Mapa: cada analista um ponto colorido, fazendas no fundo
                     m = folium.Map(location=[-14.2, -53.2], zoom_start=5.5, tiles="cartodbpositron")
                     marker_cluster = MarkerCluster().add_to(m)
                     for idx, (_, row) in enumerate(resultados_filtrados.iterrows()):
@@ -343,7 +342,6 @@ if kml_file and xlsx_file:
                     st.subheader("Mapa")
                     st_folium(m, width=None, height=530, use_container_width=True)
             else:
-                # Visualização de um especialista
                 row = resultados_filtrados.iloc[0].to_dict()
                 with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
                     cols = st.columns(1 if is_mobile else 3)
