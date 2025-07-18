@@ -455,7 +455,12 @@ if kml_file and xlsx_file and geojson_file:
             cidade_norm = cidade_mais_proxima["CIDADE"]
             cidade_dist_km = cidade_mais_proxima["DIST_METROS"] / 1000
 
-            st.success(f"🏠 <span style='color:#22577A'><b>Cidade mais próxima:</b></span> <b>{cidade_nome}</b> <span style='color:#4CAF50'>({cidade_dist_km:.1f} km da unidade)</span>", unsafe_allow_html=True)
+            st.markdown(
+    f"<div style='background-color:#e8f5e9;padding:9px;border-radius:8px;border-left:6px solid #4CAF50;'>"
+    f"🏠 <span style='color:#22577A'><b>Cidade mais próxima:</b></span> <b>{cidade_nome}</b> "
+    f"<span style='color:#4CAF50'>({cidade_dist_km:.1f} km da unidade)</span></div>",
+    unsafe_allow_html=True
+)
 
             # Mapa compacto
             m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, height=350, tiles="cartodbpositron")
