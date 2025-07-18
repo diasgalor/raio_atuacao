@@ -373,7 +373,7 @@ if kml_file and xlsx_file:
                 with st.expander("🔍 Todos os especialistas do gestor selecionado", expanded=True):
                     total_unidades = sum([len(row['UNIDADES_ATENDIDAS']) for _, row in resultados_filtrados.iterrows()])
                     dist_medias = [row["DIST_MEDIA"] for _, row in resultados_filtrados.iterrows()]
-                    dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()])
+                    dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()]
                     cols = st.columns(3)
                     cols[0].markdown(
                         f'<div class="metric-card"><div class="metric-title">Unidades Atendidas</div><div class="metric-value">{total_unidades}</div></div>',
