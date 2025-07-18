@@ -12,6 +12,8 @@ import math
 from unidecode import unidecode
 import json
 from shapely.geometry import shape
+from fuzzywuzzy import fuzz
+import plotly.express as px
 
 PASTEL_COLORS = [
     "#FFB3BA", "#FFDFBA", "#FFFFBA", "#BAFFC9", "#BAE1FF",
@@ -26,15 +28,13 @@ st.sidebar.header("Upload de Arquivos")
 kml_file = st.sidebar.file_uploader("📂 Upload KML", type=["kml"])
 xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=["xlsx", "xls"])
 
-# CSS atualizado para maior responsividade
+# CSS ajustado para responsividade total
 st.markdown("""
    <style>
    html, body, .stApp {
        background-color: #f7f8fa;
        font-family: 'Inter', 'Arial', sans-serif !important;
-   }
-   .stApp {
-       max-width: 1400px;
+       width: 100%;
        margin: 0 auto;
        padding: 20px;
        box-sizing: border-box;
@@ -90,23 +90,30 @@ st.markdown("""
    .stButton>button:hover {
        background: linear-gradient(90deg, #dbeafe 0, #ffd6e0 100%);
    }
-   .stData  {
+   .stData {
        border-radius: 10px !important;
        border: 1.5px solid #dbeafe !important;
    }
+   @media screen and (max-width: 1024px) {
+       .stApp { padding: 15px !important; }
+       .stSelectbox, .stMultiSelect, .stTextInput, .stNumberInput { 
+           font-size: 13px !important; 
+           padding: 7px !important; 
+       }
+       .metric-card { padding: 10px !important; }
+       .metric-title { font-size: 13px; }
+       .metric-value { font-size: 16px; }
+   }
    @media screen and (max-width: 768px) {
-       .stApp { padding: 10px !important; max-width: 100% !important; }
+       .stApp { padding: 10px !important; }
        .stSelectbox, .stMultiSelect, .stTextInput, .stNumberInput { 
            font-size: 12px !important; 
            padding: 6px !important; 
        }
-       .stExpander { padding: 10px !important; }
-       .metric-card { padding: 10px !important; }
+       .metric-card { padding: 8px !important; }
        .metric-title { font-size: 12px; }
-       .metric-value { font-size: 16px; }
+       .metric-value { font-size: 15px; }
        .stButton>button { font-size: 12px; padding: 6px 12px; }
-       .stColumn { width: 100% !important; margin-bottom: 8px; }
-       .stMap { height: 350px !important; }
    }
    @media screen and (max-width: 480px) {
        .stApp { padding: 8px !important; }
@@ -114,7 +121,7 @@ st.markdown("""
            font-size: 11px !important; 
            padding: 5px !important; 
        }
-       .metric-card { padding: 8px !important; }
+       .metric-card { padding: 6px !important; }
        .metric-title { font-size: 11px; }
        .metric-value { font-size: 14px; }
        .stButton>button { font-size: 11px; padding: 5px 10px; }
@@ -144,7 +151,7 @@ def extrair_dados_kml(kml_content):
                 coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
                 try:
                     from shapely.geometry import Polygon
-                    geometry = Polygon([(c[0], c[1]) for c in coords]).centroid  # Usar centroide para reduzir complexidade
+                    geometry = Polygon([(c[0], c[1]) for c in coords]).centroid
                 except Exception as geom_e:
                     st.markdown(
                         f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
@@ -242,11 +249,9 @@ if kml_file and xlsx_file:
         kml_content = kml_file.read().decode('utf-8')
         gdf_kml = extrair_dados_kml(kml_content)
         gdf_kml['geometry'] = gdf_kml['geometry'].to_crs(epsg=4326)
-        # Correção para MultiPoint: usar centroid
         gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.centroid.x, p.centroid.y]))
         gdf_kml['UNIDADE_normalized'] = gdf_kml['NOME_FAZ'].apply(normalize_str)
 
-        # Carregar df_analistas
         df_analistas = pd.read_excel(xlsx_file)
         df_analistas.columns = df_analistas.columns.str.strip().str.upper()
 
@@ -290,9 +295,8 @@ if kml_file and xlsx_file:
         df_analistas_grouped = df_analistas.groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON'])['UNIDADE_normalized'].apply(set).reset_index()
         df_analistas_grouped['UNIDADE_normalized'] = df_analistas_grouped['UNIDADE_normalized'].apply(list)
 
-        # Otimizar merge para reduzir tamanho do DataFrame
         df_merge = df_analistas_grouped.explode('UNIDADE_normalized').merge(
-            gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude', 'geometry']],
+            gdf_kml[['UNIDADE_normalized', 'Latitude', Vega', 'geometry']],
             on='UNIDADE_normalized',
             how='left'
         )
@@ -313,7 +317,7 @@ if kml_file and xlsx_file:
                     lon = df_unidade['Longitude'].iloc[0]
                     dist = haversine(base_coords['LON'], base_coords['LAT'], lon, lat)
                     distancias.append((unidade, round(dist, 1)))
-                    geometries.append(df_unidade['geometry'].iloc[0])  # Armazenar apenas uma geometria por unidade
+                    geometries.append(df_unidade['geometry'].iloc[0])
 
             medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
             max_dist = max([d[1] for d in distancias]) if distancias else 0
@@ -332,9 +336,7 @@ if kml_file and xlsx_file:
             })
         resultados = pd.DataFrame(resultados)
 
-        # Filtros
-        is_mobile = st.sidebar.checkbox("Layout para celular?", value=False)
-        col1, _ = (st.columns(1) if is_mobile else st.columns([1, 1], gap="medium"))
+        col1, _, _ = st.columns([1, 1, 1], gap="medium")
         with col1:
             st.markdown("### Seleção")
             gestores = sorted(resultados['GESTOR'].unique())
@@ -343,7 +345,6 @@ if kml_file and xlsx_file:
             nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
             especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
 
-            # Filtro Fazenda (UNIDADE)
             unidades_filtradas = []
             if especialista_selecionado == 'Todos':
                 for ulist in especialistas_filtrados['UNIDADES_ATENDIDAS']:
@@ -372,21 +373,20 @@ if kml_file and xlsx_file:
                 with st.expander("🔍 Todos os especialistas do gestor selecionado", expanded=True):
                     total_unidades = sum([len(row['UNIDADES_ATENDIDAS']) for _, row in resultados_filtrados.iterrows()])
                     dist_medias = [row["DIST_MEDIA"] for _, row in resultados_filtrados.iterrows()]
-                    dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()]
-                    cols = st.columns(1 if is_mobile else 3)
+                    dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()])
+                    cols = st.columns(3)
                     cols[0].markdown(
                         f'<div class="metric-card"><div class="metric-title">Unidades Atendidas</div><div class="metric-value">{total_unidades}</div></div>',
                         unsafe_allow_html=True
                     )
-                    if not is_mobile:
-                        cols[1].markdown(
-                            f'<div class="metric-card"><div class="metric-title">Distância Média Geral</div><div class="metric-value">{round(sum(dist_medias) / len(dist_medias),1) if dist_medias else 0} km</div></div>',
-                            unsafe_allow_html=True
-                        )
-                        cols[2].markdown(
-                            f'<div class="metric-card"><div class="metric-title">Maior Raio</div><div class="metric-value">{max(dist_maximos) if dist_maximos else 0} km</div></div>',
-                            unsafe_allow_html=True
-                        )
+                    cols[1].markdown(
+                        f'<div class="metric-card"><div class="metric-title">Distância Média Geral</div><div class="metric-value">{round(sum(dist_medias) / len(dist_medias),1) if dist_medias else 0} km</div></div>',
+                        unsafe_allow_html=True
+                    )
+                    cols[2].markdown(
+                        f'<div class="metric-card"><div class="metric-title">Maior Raio</div><div class="metric-value">{max(dist_maximos) if dist_maximos else 0} km</div></div>',
+                        unsafe_allow_html=True
+                    )
 
                     detalhes = []
                     for _, row in resultados_filtrados.iterrows():
@@ -412,8 +412,7 @@ if kml_file and xlsx_file:
                             ),
                             icon=folium.Icon(color="blue", icon="user", prefix="fa", icon_color=color)
                         ).add_to(marker_cluster)
-                        # Adicionar apenas marcadores para unidades, em vez de GeoJson completos
-                        for unidade in row['UNIDADES_ATENDIDAS'][:50]:  # Limitar a 50 unidades
+                        for unidade in row['UNIDADES_ATENDIDAS'][:50]:
                             df_unidade = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade]
                             if not df_unidade.empty:
                                 lat = df_unidade['Latitude'].iloc[0]
@@ -428,23 +427,22 @@ if kml_file and xlsx_file:
             else:
                 row = resultados_filtrados.iloc[0].to_dict()
                 with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
-                    cols = st.columns(1 if is_mobile else 3)
+                    cols = st.columns(3)
                     cols[0].markdown(
                         f'<div class="metric-card"><div class="metric-title">Unidades Atendidas</div>'
                         f'<div class="metric-value">{len(row["UNIDADES_ATENDIDAS"])}</div></div>',
                         unsafe_allow_html=True
                     )
-                    if not is_mobile:
-                        cols[1].markdown(
-                            f'<div class="metric-card"><div class="metric-title">Distância Média</div>'
-                            f'<div class="metric-value">{row["DIST_MEDIA"]} km</div></div>',
-                            unsafe_allow_html=True
-                        )
-                        cols[2].markdown(
-                            f'<div class="metric-card"><div class="metric-title">Raio Máximo</div>'
-                            f'<div class="metric-value">{row["DIST_MAX"]} km</div></div>',
-                            unsafe_allow_html=True
-                        )
+                    cols[1].markdown(
+                        f'<div class="metric-card"><div class="metric-title">Distância Média</div>'
+                        f'<div class="metric-value">{row["DIST_MEDIA"]} km</div></div>',
+                        unsafe_allow_html=True
+                    )
+                    cols[2].markdown(
+                        f'<div class="metric-card"><div class="metric-title">Raio Máximo</div>'
+                        f'<div class="metric-value">{row["DIST_MAX"]} km</div></div>',
+                        unsafe_allow_html=True
+                    )
 
                     detalhes_df = pd.DataFrame([(row['ESPECIALISTA'].title(), unidade.title(), dist) for unidade, dist in row['DETALHES']],
                                               columns=['Especialista', 'Fazenda', 'Distância (km)'])
@@ -465,7 +463,7 @@ if kml_file and xlsx_file:
                         ),
                         icon=folium.Icon(color="blue", icon="user", prefix="fa", icon_color="#2196F3")
                     ).add_to(marker_cluster)
-                    for unidade in row['UNIDADES_ATENDIDAS'][:50]:  # Limitar a 50 unidades
+                    for unidade in row['UNIDADES_ATENDIDAS'][:50]:
                         df_unidade = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade]
                         if not df_unidade.empty:
                             lat = df_unidade['Latitude'].iloc[0]
@@ -508,7 +506,6 @@ else:
 st.markdown("---")
 st.header("🏙️ Análise Avançada de Cidade Mais Próxima da Unidade (Fazenda)")
 
-# Opção para ocultar barra de upload dos arquivos
 show_import = st.sidebar.checkbox("👁️ Exibir barra de importação (GeoJSON cidades)", value=True)
 geojson_file = None
 if show_import:
@@ -522,7 +519,7 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
         for feat in cidades_data["features"]:
             prop = feat["properties"]
             cidade_nome = prop.get("nome") or prop.get("NOME") or prop.get("cidade") or prop.get("City") or list(prop.values())[0]
-            geom = shape(feat["geometry"]).centroid  # Usar centroide para cidades
+            geom = shape(feat["geometry"]).centroid
             lon, lat = geom.x, geom.y
             cidades_lista.append({
                 "CIDADE": normalize_str(cidade_nome),
@@ -535,13 +532,11 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
         unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda) para análise:", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
         unidade_norm = normalize_str(unidade_sel)
 
-        # Pega centroide da unidade selecionada (do KML)
         unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
         if not unidade_row.empty:
             uni_lat = unidade_row['Latitude'].iloc[0]
             uni_lon = unidade_row['Longitude'].iloc[0]
 
-            # Função haversine (metros)
             def haversine_m(lon1, lat1, lon2, lat2):
                 R = 6371000
                 lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
@@ -565,7 +560,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                 unsafe_allow_html=True
             )
 
-            # Mapa compacto
             m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, tiles="cartodbpositron")
             folium.Marker(
                 location=[uni_lat, uni_lon],
@@ -581,19 +575,18 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                             color="#b5ead7", weight=3, dash_array="5,10").add_to(m)
             st_folium(m, width=None, height=350, use_container_width=True)
 
-            # Analistas que moram na cidade mais próxima
-            analistas_cidade = df_analistas[df_analistas["CIDADE_BASE"] == cidade_norm]
-            # Analistas que atendem a unidade
-            analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
+            def find_matching_city(cidade_base, cidade_norm, threshold=90):
+                return fuzz.ratio(cidade_base, cidade_norm) >= threshold
 
-            # Analistas que moram na cidade e atendem a unidade
+            analistas_cidade = df_analistas[
+                df_analistas["CIDADE_BASE"].apply(lambda x: find_matching_city(x, cidade_norm))
+            ]
+            analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
             analistas_moram_atendem = analistas_cidade[analistas_cidade["UNIDADE_normalized"] == unidade_norm]
             analistas_moram_atendem = analistas_moram_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
-            # Analistas que moram na cidade mas NÃO atendem a unidade
             analistas_moram_nao_atendem = analistas_cidade[~analistas_cidade["UNIDADE_normalized"].isin([unidade_norm])]
             analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
 
-            # Gráfico de distribuição de distâncias (para analistas que atendem)
             if not analistas_atendem.empty:
                 distancias = []
                 for _, row in analistas_atendem.iterrows():
@@ -604,30 +597,29 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                 st.markdown("#### 📊 Distribuição de Distâncias dos Analistas que Atendem a Unidade")
                 st.markdown("Este gráfico mostra a distância entre a cidade base de cada analista que atende a unidade selecionada e a própria unidade, ajudando a identificar oportunidades de realocação.")
 
-                chart_data = {
-                    "type": "bar",
-                    "data": {
-                        "labels": dist_df["Especialista"].tolist(),
-                        "datasets": [{
-                            "label": "Distância (km)",
-                            "data": dist_df["Distância (km)"].tolist(),
-                            "backgroundColor": PASTEL_COLORS[:len(dist_df)],
-                            "borderColor": PASTEL_COLORS[:len(dist_df)],
-                            "borderWidth": 1
-                        }]
-                    },
-                    "options": {
-                        "scales": {
-                            "y": {"beginAtZero": True, "title": {"display": True, "text": "Distância (km)"}},
-                            "x": {"title": {"display": True, "text": "Especialista"}}
-                        },
-                        "plugins": {
-                            "legend": {"display": False},
-                            "title": {"display": True, "text": "Distâncias dos Analistas à Unidade"}
-                        }
-                    }
-                }
-                st.markdown(f"```chartjs\n{json.dumps(chart_data, indent=2)}\n```")
+                # Depuração: exibir dados do gráfico
+                st.write("**Dados do gráfico:**")
+                st.write(dist_df)
+
+                # Criar gráfico com Plotly
+                fig = px.bar(
+                    dist_df,
+                    x="Especialista",
+                    y="Distância (km)",
+                    title="Distâncias dos Analistas à Unidade",
+                    color="Especialista",
+                    color_discrete_sequence=PASTEL_COLORS[:len(dist_df)],
+                    labels={"Distância (km)": "Distância (km)", "Especialista": "Especialista"}
+                )
+                fig.update_layout(
+                    showlegend=False,
+                    yaxis=dict(title="Distância (km)", zeroline=True, showgrid=True),
+                    xaxis=dict(title="Especialista"),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=40, t=40, b=40)
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
             st.markdown(
                 f'#### 🟢 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
@@ -654,7 +646,7 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
             else:
                 st.markdown(
                     f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
-                    f'❌ Nenhum analista mora nessa cidade e atende esta fazenda.'
+                    f'❌ Nenhum analista mora na cidade mais próxima ({cidade_nome}) e atende esta fazenda.'
                     f'</div>',
                     unsafe_allow_html=True
                 )
@@ -685,16 +677,15 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
             else:
                 st.markdown(
                     f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
-                    f'✅ Nenhum analista mora nessa cidade sem atender esta fazenda.'
+                    f'✅ Nenhum analista mora na cidade mais próxima ({cidade_nome}) sem atender esta fazenda.'
                     f'</div>',
                     unsafe_allow_html=True
                 )
 
-            # Se ninguém mora na cidade mais próxima, mostra cidades base dos especialistas que atendem a fazenda
             if analistas_moram_atendem.empty:
                 st.markdown(
                     f'<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
-                    f'🔎 <b>Nenhum analista mora na cidade mais próxima e atende esta fazenda.</b> Veja abaixo as cidades base dos especialistas que atendem esta fazenda:'
+                    f'🔎 <b>Nenhum analista mora na cidade mais próxima ({cidade_nome}) e atende esta fazenda.</b> Veja abaixo as cidades base dos especialistas que atendem esta fazenda:'
                     f'</div>',
                     unsafe_allow_html=True
                 )
