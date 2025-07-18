@@ -296,7 +296,7 @@ if kml_file and xlsx_file:
         df_analistas_grouped['UNIDADE_normalized'] = df_analistas_grouped['UNIDADE_normalized'].apply(list)
 
         df_merge = df_analistas_grouped.explode('UNIDADE_normalized').merge(
-            gdf_kml[['UNIDADE_normalized', 'Latitude', 'Vega', 'geometry']],
+            gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude', 'geometry']],
             on='UNIDADE_normalized',
             how='left'
         )
