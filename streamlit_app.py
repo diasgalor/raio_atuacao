@@ -563,5 +563,4 @@ if kml_file and xlsx_file and geojson_file:
                         }
                     }
                 }
-                ```chartjs
-                {chart_data}
+                
