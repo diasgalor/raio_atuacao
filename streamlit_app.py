@@ -404,7 +404,7 @@ if kml_file and xlsx_file:
                 )
                 folium.Marker(
                     location=[row['LAT'], row['LON']],
-                    popup=folium.Popup(popup_text, max_width=200),  # Reduzido para celular
+                    popup=folium.Popup(popup_text, max_width=200),
                     icon=folium.Icon(color='blue', icon='user')
                 ).add_to(marker_cluster)
 
@@ -428,7 +428,7 @@ if kml_file and xlsx_file:
                 ).add_to(m)
 
                 st.subheader("Mapa")
-                st_folium(m, width=100, height=300)  # Ajustado para celular
+                st_folium(m, width=100, height=400)  # Aumentado de 300px para 400px
 
             else:
                 st.warning("Nenhum dado encontrado para o especialista selecionado.")
