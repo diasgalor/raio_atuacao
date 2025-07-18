@@ -400,7 +400,7 @@ else:
 # ========================= BLOCO DE ANÁLISE DE CIDADE MAIS PRÓXIMA =========================
 
 
-st.markdown("---")
+
 st.header("🏙️ Análise de Cidade Mais Próxima da Unidade (Fazenda)")
 
 st.markdown("---")
