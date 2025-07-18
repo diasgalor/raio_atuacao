@@ -430,10 +430,11 @@ if kml_file and xlsx_file:
                     popup=f"Raio de atuação: {row['DIST_MAX']} km"
                 ).add_to(m)
 
+                                # Container para o mapa com margem superior
                 with st.container():
-    st.subheader("Mapa")
-    st_folium(m, width=None, height=500, use_container_width=True)
-
+                    st.subheader("Mapa")
+                    # Aumentando um pouco a altura do mapa e usando container width
+                    st_folium(m, width=None, height=600, use_container_width=True)
             else:
                 st.warning("Nenhum dado encontrado para o especialista selecionado.")
     except Exception as e:
