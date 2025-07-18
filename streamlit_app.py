@@ -500,7 +500,7 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                 f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
                 f'🏠 <span style="color:#22577A"><b>Cidade mais próxima:</b></span> <b>{cidade_nome}</b> '
                 f'<span style="color:#4CAF50">({cidade_dist_km:.1f} km da unidade)</span>'
-                '</div>',
+                f'</div>',
                 unsafe_allow_html=True
             )
 
@@ -566,9 +566,12 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                         }
                     }
                 }
-                st.markdown("```chartjs\n" + json.dumps(chart_data, indent=2) + "\n```")
+                st.markdown(f"```chartjs\n{json.dumps(chart_data, indent=2)}\n```")
 
-            st.markdown("#### 🟢 Analistas que moram na cidade mais próxima e <span style='color:#22577A'><b>atendem</b></span> esta fazenda:", unsafe_allow_html=True)
+            st.markdown(
+                '#### 🟢 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
+                unsafe_allow_html=True
+            )
             if not analistas_moram_atendem.empty:
                 exibe = []
                 for idx, row in analistas_moram_atendem.iterrows():
@@ -595,7 +598,10 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                     unsafe_allow_html=True
                 )
 
-            st.markdown("#### 🟡 Analistas que moram na cidade mais próxima e <span style='color:#22577A'><b>não atendem</b></span> esta fazenda:", unsafe_allow_html=True)
+            st.markdown(
+                '#### 🟡 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>não atendem</b></span> esta fazenda:',
+                unsafe_allow_html=True
+            )
             if not analistas_moram_nao_atendem.empty:
                 exibe = []
                 for idx, row in analistas_moram_nao_atendem.iterrows():
@@ -657,3 +663,15 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                 '❗ Não foi possível localizar a unidade selecionada no KML.'
                 '</div>',
                 unsafe_allow_html=True
+            )
+    except Exception as e:
+        st.markdown(
+            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+            f'❌ Erro na análise de cidade mais próxima: {str(e)}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+else:
+    st.info("ℹ️ Para a análise de cidade mais próxima, faça upload dos arquivos KML, Excel e GeoJSON de cidades.")
+
+# ====================== FIM DO BLOCO DE ANÁLISE DE CIDADE MAIS PRÓXIMA (DETALHADO) ======================
