@@ -342,7 +342,7 @@ if kml_file and xlsx_file:
                                     style_function=lambda x, color=color: {'fillColor': color, 'color': color, 'fillOpacity': 0.13, 'weight': 2}
                                 ).add_to(m)
                     st.subheader("Mapa")
-                    st_folium(m, width=None, height=530, use_container_width=True)
+                    st_folium(m, width=None, height=340, use_container_width=True)
             else:
                 row = resultados_filtrados.iloc[0].to_dict()
                 with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
@@ -484,9 +484,11 @@ if kml_file and xlsx_file and geojson_file:
             analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
 
             # Analistas que moram na cidade e atendem a unidade
-            analistas_moram_atendem = analistas_cidade[analistas_cidade["UNIDADE_normalized"] == unidade_norm]
+            analistas_moram_atendem = analistas_moram_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
             # Analistas que moram na cidade mas NÃO atendem a unidade
             analistas_moram_nao_atendem = analistas_cidade[analistas_cidade["UNIDADE_normalized"] != unidade_norm]
+            # Deduplicar por especialista, gestor, cidade base
+            analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
 
             # ---- Análise de logística detalhada ----
             st.markdown("#### 🟢 Analistas que moram na cidade mais próxima e <span style='color:#22577A'><b>atendem</b></span> esta fazenda:", unsafe_allow_html=True)
