@@ -103,6 +103,9 @@ st.markdown("""
            width: 100% !important;
            margin-bottom: 10px;
        }
+       .stMap {
+           margin-top: 10px !important;
+       }
    }
    </style>
 """, unsafe_allow_html=True)
@@ -428,7 +431,7 @@ if kml_file and xlsx_file:
                 ).add_to(m)
 
                 st.subheader("Mapa")
-                st_folium(m, width=100, height=400)  # Aumentado de 300px para 400px
+                st_folium(m, width=100, height=500)  # Aumentado de 400px para 500px
 
             else:
                 st.warning("Nenhum dado encontrado para o especialista selecionado.")
