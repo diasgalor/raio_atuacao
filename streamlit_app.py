@@ -208,11 +208,14 @@ if kml_file and xlsx_file:
         kml_content = kml_file.read().decode('utf-8')
         gdf_kml = extrair_dados_kml(kml_content)
         gdf_kml['geometry'] = gdf_kml['geometry'].to_crs(epsg=4326)
-        gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.x, p.y]))
+        # Correção: Usar centroid para garantir compatibilidade com MultiPoint
+        gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.centroid.x, p.centroid.y]))
         gdf_kml['UNIDADE_normalized'] = gdf_kml['NOME_FAZ'].apply(normalize_str)
 
+        # Mover df_analistas para o escopo global
         df_analistas = pd.read_excel(xlsx_file)
         df_analistas.columns = df_analistas.columns.str.strip().str.upper()
+        # ... (restante do bloco continua igual))
 
         expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE']
         missing_columns = [col for col in expected_columns if col not in df_analistas.columns]
@@ -451,7 +454,7 @@ if show_import:
     st.sidebar.markdown("### (Opcional) Cidade mais próxima")
     geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=["geojson"])
 
-if kml_file and xlsx_file and geojson_file:
+if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
     try:
         cidades_data = json.load(geojson_file)
         cidades_lista = []
@@ -654,15 +657,3 @@ if kml_file and xlsx_file and geojson_file:
                 '❗ Não foi possível localizar a unidade selecionada no KML.'
                 '</div>',
                 unsafe_allow_html=True
-            )
-    except Exception as e:
-        st.markdown(
-            '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-            f'❌ Erro na análise de cidade mais próxima: {str(e)}'
-            '</div>',
-            unsafe_allow_html=True
-        )
-else:
-    st.info("ℹ️ Para a análise de cidade mais próxima, faça upload dos arquivos KML, Excel e GeoJSON de cidades.")
-
-# ====================== FIM DO BLOCO DE ANÁLISE DE CIDADE MAIS PRÓXIMA (DETALHADO) ======================
