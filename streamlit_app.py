@@ -1,33 +1,24 @@
-import xml.etree.ElementTree as ET
-from streamlit_folium import st_folium
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import Point
-from shapely.ops import unary_union
 import folium
 from folium.plugins import MarkerCluster
-import math
 from unidecode import unidecode
+import xml.etree.ElementTree as ET
+from shapely.geometry import Polygon, LineString, Point, MultiPolygon
+from shapely.ops import unary_union
+import requests
+import time
+import math
 import json
 from shapely.geometry import shape
 from fuzzywuzzy import fuzz
-import plotly.express as px
-
-PASTEL_COLORS = [
-    "#FFB3BA", "#FFDFBA", "#FFFFBA", "#BAFFC9", "#BAE1FF",
-    "#dcd3ff", "#baffea", "#ffd6e0", "#e2f0cb", "#b5ead7"
-]
+from streamlit_folium import st_folium
 
 # Configuração da página
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
-# Upload de arquivos na sidebar
-st.sidebar.header("Upload de Arquivos")
-kml_file = st.sidebar.file_uploader("📂 Upload KML", type=["kml"])
-xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=["xlsx", "xls"])
-
-# CSS ajustado para responsividade total
+# CSS para responsividade
 st.markdown("""
    <style>
    html, body, .stApp {
@@ -132,76 +123,61 @@ st.markdown("""
    </style>
 """, unsafe_allow_html=True)
 
-st.title("📍 Raio de Atuação dos Analistas")
-st.markdown("Selecione um gestor, especialista e fazenda (unidade) para visualizar as unidades atendidas, distâncias e o raio de atuação no mapa. Use 'Todos' para ver a visão consolidada.")
-
-def extrair_dados_kml(kml_content):
+# Funções auxiliares
+def extrair_dados_kml(kml_bytes):
     try:
-        tree = ET.fromstring(kml_content)
-        ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+        if not kml_bytes:
+            st.markdown(
+                '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                '❌ Arquivo KML vazio ou inválido.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
+        kml_string = kml_bytes.decode("utf-8")
+        tree = ET.fromstring(kml_string)
+        ns = {"kml": "http://www.opengis.net/kml/2.2"}
         dados = {}
-        for placemark in tree.findall('.//kml:Placemark', ns):
-            props = {}
-            name_elem = placemark.find('kml:name', ns)
-            props['Name'] = name_elem.text if name_elem is not None else None
-            for simple_data in placemark.findall('.//kml:SimpleData', ns):
-                props[simple_data.get('name')] = simple_data.text
-
+        placemarks = tree.findall(".//kml:Placemark", ns)
+        for placemark in placemarks:
+            props = {sd.get("name"): sd.text for sd in placemark.findall(".//kml:SimpleData", ns)}
+            name_elem = placemark.find("kml:name", ns)
+            props["Name"] = name_elem.text if name_elem is not None else "Sem Nome"
             geometry = None
-            polygon_elem = placemark.find('.//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates', ns)
-            if polygon_elem is not None:
-                coords_text = polygon_elem.text.strip()
-                coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
-                try:
-                    from shapely.geometry import Polygon
-                    geometry = Polygon([(c[0], c[1]) for c in coords]).centroid
-                except Exception as geom_e:
-                    st.markdown(
-                        f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                        f'⚠️ Erro ao criar geometria para placemark {props.get("Name", "Sem Nome")}: {geom_e}'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                    geometry = None
-
-            line_elem = placemark.find('.//kml:LineString/kml:coordinates', ns)
-            if line_elem is not None:
-                coords_text = line_elem.text.strip()
-                coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
-                try:
-                    from shapely.geometry import LineString
-                    geometry = LineString([(c[0], c[1]) for c in coords]).centroid
-                except Exception as geom_e:
-                    st.markdown(
-                        f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                        f'⚠️ Erro ao criar geometria para placemark {props.get("Name", "Sem Nome")}: {geom_e}'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                    geometry = None
-
-            point_elem = placemark.find('.//kml:Point/kml:coordinates', ns)
-            if point_elem is not None:
-                coords_text = point_elem.text.strip()
-                coords = tuple(map(float, coords_text.split(',')))
-                try:
-                    geometry = Point(coords[0], coords[1])
-                except Exception as geom_e:
-                    st.markdown(
-                        f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                        f'⚠️ Erro ao criar geometria para placemark {props.get("Name", "Sem Nome")}: {geom_e}'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                    geometry = None
-
+            coord_tags = {
+                "Polygon": ".//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates",
+                "LineString": ".//kml:LineString/kml:coordinates",
+                "Point": ".//kml:Point/kml:coordinates"
+            }
+            for geom_type, tag in coord_tags.items():
+                elem = placemark.find(tag, ns)
+                if elem is not None:
+                    coords_text = elem.text.strip()
+                    coords = [tuple(map(float, c.split(","))) for c in coords_text.split()]
+                    try:
+                        if geom_type == "Polygon":
+                            geometry = Polygon([(c[0], c[1]) for c in coords])
+                        elif geom_type == "LineString":
+                            geometry = LineString([(c[0], c[1]) for c in coords])
+                        elif geom_type == "Point":
+                            geometry = Point(coords[0])
+                        break
+                    except Exception as geom_e:
+                        st.markdown(
+                            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                            f'⚠️ Erro ao criar geometria para placemark {props.get("Name", "Sem Nome")}: {geom_e}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                        continue
             if geometry:
-                unidade = props.get('NOME_FAZ', props.get('Name', 'Sem Nome'))
-                if unidade in dados:
-                    dados[unidade]['geometries'].append(geometry)
-                    dados[unidade]['props'].update(props)
-                else:
-                    dados[unidade] = {'geometries': [geometry], 'props': props}
+                nome_faz = props.get("NOME_FAZ", props.get("Name"))
+                props["NOME_FAZ"] = nome_faz
+                unidade = nome_faz
+                if unidade not in dados:
+                    dados[unidade] = {"geometries": [], "props": {}}
+                dados[unidade]["geometries"].append(geometry)
+                dados[unidade]["props"].update(props)
 
         if not dados:
             st.markdown(
@@ -212,288 +188,332 @@ def extrair_dados_kml(kml_content):
             )
             return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
 
-        dados_gdf = []
-        for unidade, info in dados.items():
-            try:
-                consolidated_geometry = unary_union(info['geometries'])
-                dados_gdf.append({
-                    **info['props'],
-                    'Name': unidade,
-                    'geometry': consolidated_geometry
-                })
-            except Exception as e:
-                st.markdown(
-                    f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                    f'⚠️ Erro ao consolidar geometria para unidade {unidade}: {e}'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-
-        gdf = gpd.GeoDataFrame(dados_gdf, crs="EPSG:4326")
+        gdf_data = [{
+            "Name": unidade,
+            "geometry": unary_union(info["geometries"]),
+            "NOME_FAZ": info["props"].get("NOME_FAZ", info["props"].get("Name")),
+            **info["props"]
+        } for unidade, info in dados.items()]
+        gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
         return gdf
-
     except Exception as e:
         st.markdown(
             f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-            f'❌ Erro ao processar KML: {str(e)}'
+            f'❌ Erro ao processar KML: {e}'
             f'</div>',
             unsafe_allow_html=True
         )
         return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
 
 def normalize_str(s):
-    return unidecode(str(s).strip().upper())
+    try:
+        return unidecode(str(s).strip().upper()) if pd.notna(s) else ""
+    except Exception:
+        return ""
+
+def haversine(lon1, lat1, lon2, lat2):
+    try:
+        R = 6371
+        lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+    except Exception:
+        return None
+
+def get_route(start_lon, start_lat, end_lon, end_lat):
+    try:
+        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        res = r.json()
+        routes = res.get("routes", [])
+        if not routes:
+            return None
+        route_coords = routes[0]["geometry"]["coordinates"]
+        points = [(point[1], point[0]) for point in route_coords]
+        return points
+    except Exception:
+        return None
+
+def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_rotas):
+    if gdf_kml.empty:
+        st.markdown(
+            '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+            '❌ Nenhuma geometria válida encontrada no KML.'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        return None
+
+    gdf_kml["Longitude_Unidade"] = gdf_kml.geometry.centroid.x
+    gdf_kml["Latitude_Unidade"] = gdf_kml.geometry.centroid.y
+    gdf_kml["UNIDADE_normalized"] = gdf_kml["NOME_FAZ"].apply(normalize_str)
+
+    df_analistas.columns = [normalize_str(col) for col in df_analistas.columns]
+    expected_cols = ["GESTOR", "ESPECIALISTA", "CIDADE_BASE", "UNIDADE", "COORDENADAS_CIDADE"]
+    missing_cols = [col for col in expected_cols if col not in df_analistas.columns]
+    if missing_cols:
+        st.markdown(
+            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+            f'❌ Colunas faltando no Excel: {missing_cols}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        return None
+
+    for col in ["GESTOR", "ESPECIALISTA", "CIDADE_BASE", "UNIDADE"]:
+        df_analistas[col] = df_analistas[col].apply(normalize_str)
+
+    df_analistas["COORDENADAS_CIDADE"] = df_analistas["COORDENADAS_CIDADE"].astype(str).str.replace("'", "")
+    coords = df_analistas["COORDENADAS_CIDADE"].str.split(",", expand=True)
+    df_analistas["LAT_BASE"] = pd.to_numeric(coords[0], errors="coerce")
+    df_analistas["LON_BASE"] = pd.to_numeric(coords[1], errors="coerce")
+    df_analistas = df_analistas.dropna(subset=["LAT_BASE", "LON_BASE"])
+    df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
+
+    df_merged = pd.merge(
+        df_analistas,
+        gdf_kml[["UNIDADE_normalized", "Latitude_Unidade", "Longitude_Unidade", "geometry", "Name", "NOME_FAZ"]],
+        on="UNIDADE_normalized",
+        how="left"
+    )
+    df_merged = df_merged.dropna(subset=["Latitude_Unidade", "Longitude_Unidade"])
+    df_merged["DISTANCIA_KM"] = df_merged.apply(
+        lambda row: haversine(row["LON_BASE"], row["LAT_BASE"], row["Longitude_Unidade"], row["Latitude_Unidade"]),
+        axis=1
+    )
+
+    cores_base = ["#E6194B", "#3CB44B", "#FFE119", "#4363D8", "#F58231",
+                  "#911EB4", "#46F0F0", "#F032E6", "#BCF60C", "#FABEBE",
+                  "#008080", "#E6BEFF", "#9A6324", "#FFFAC8", "#800000",
+                  "#AAFFC3", "#808000", "#FFD8B1", "#000075", "#808080"]
+    especialistas_unicos = df_merged["ESPECIALISTA"].unique()
+    cor_especialista = {especialista: cores_base[i % len(cores_base)] for i, especialista in enumerate(especialistas_unicos)}
+    df_merged["COR"] = df_merged["ESPECIALISTA"].map(cor_especialista)
+
+    df_filtrado = df_merged.copy()
+    if gestor != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["GESTOR"] == gestor]
+    if especialista != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["ESPECIALISTA"] == especialista]
+
+    if df_filtrado.empty:
+        st.markdown(
+            '<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
+            '⚠️ Nenhum resultado para a seleção. Verifique os filtros de gestor e especialista.'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        return None
+
+    map_center = [df_filtrado["Latitude_Unidade"].mean(), df_filtrado["Longitude_Unidade"].mean()]
+    mapa = folium.Map(location=map_center, zoom_start=7, tiles="openstreetmap", control=True)
+
+    colaboradores_cluster = MarkerCluster(name="Colaboradores").add_to(mapa)
+    fazendas_group = folium.FeatureGroup(name="Fazendas").add_to(mapa)
+    rotas_group = folium.FeatureGroup(name="Rotas").add_to(mapa)
+
+    popup_css = """
+    <style>
+        .leaflet-popup-content {
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            padding: 15px;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+            min-width: 400px;
+            max-height: 350px;
+            overflow-y: auto;
+        }
+        .leaflet-popup-content b {
+            color: #00497a;
+            font-weight: bold;
+        }
+        .leaflet-popup-content ul {
+            margin: 8px 0;
+            padding-left: 25px;
+        }
+        .leaflet-popup-content li {
+            margin-bottom: 6px;
+        }
+        .leaflet-popup-content-wrapper {
+            width: 450px !important;
+        }
+    </style>
+    """
+    mapa.get_root().html.add_child(folium.Element(popup_css))
+
+    info_especialistas = df_filtrado.groupby(["ESPECIALISTA", "CIDADE_BASE", "LAT_BASE", "LON_BASE", "COR"]).agg(
+        RAIO_MAXIMO_KM=("DISTANCIA_KM", "max"),
+        DIST_MEDIA_KM=("DISTANCIA_KM", "mean"),
+        UNIDADES_ATENDIDAS=("UNIDADE", lambda x: list(x.unique()))
+    ).reset_index()
+
+    for _, row in info_especialistas.iterrows():
+        especialista_nome = row["ESPECIALISTA"].title()
+        cidade_base = row["CIDADE_BASE"].title()
+        raio_maximo = row["RAIO_MAXIMO_KM"]
+        dist_media = row["DIST_MEDIA_KM"]
+        unidades_lista = row["UNIDADES_ATENDIDAS"]
+        cor = row["COR"]
+        lat_base = row["LAT_BASE"]
+        lon_base = row["LON_BASE"]
+
+        max_unidades = 5
+        unidades_mostradas = unidades_lista[:max_unidades]
+        if len(unidades_lista) > max_unidades:
+            unidades_mostradas.append(f"... e mais {len(unidades_lista) - max_unidades} unidades")
+        unidades_html_list = [f"<li>{u.title()}</li>" for u in unidades_mostradas]
+        unidades_html = "<ul>" + "".join(unidades_html_list) + "</ul>"
+
+        popup_colaborador_html = (
+            f"<b>Especialista:</b> {especialista_nome}<br>"
+            f"<b>Cidade Base:</b> {cidade_base}<br>"
+            f"<b>Raio de Atuação:</b> {raio_maximo:.1f} km<br>"
+            f"<b>Distância Média:</b> {dist_media:.1f} km<br>"
+            f"<b>Unidades Atendidas:</b> {unidades_html}"
+        )
+
+        folium.Circle(
+            location=[lat_base, lon_base],
+            radius=raio_maximo * 1000,
+            color=cor,
+            fill=True,
+            fill_color=cor,
+            fill_opacity=0.15,
+            weight=2
+        ).add_to(mapa)
+
+        folium.Marker(
+            location=[lat_base, lon_base],
+            icon=folium.Icon(color="white", icon_color=cor, icon="user", prefix="fa"),
+            popup=folium.Popup(popup_colaborador_html, max_width=450, max_height=350),
+            tooltip=especialista_nome
+        ).add_to(colaboradores_cluster)
+
+    route_count = 0
+    max_routes = 10
+    for _, row in df_filtrado.dropna(subset=["Latitude_Unidade", "Longitude_Unidade", "geometry"]).iterrows():
+        fazenda_nome = row["NOME_FAZ"].title()
+        cidade_origem = row["CIDADE_BASE"].title()
+        especialista_responsavel = row["ESPECIALISTA"].title()
+        cor_fazenda = row["COR"]
+        lat_unidade = row["Latitude_Unidade"]
+        lon_unidade = row["Longitude_Unidade"]
+        lat_base_colab = row["LAT_BASE"]
+        lon_base_colab = row["LON_BASE"]
+        geometry = row["geometry"]
+
+        if isinstance(geometry, (Polygon, MultiPolygon)):
+            if isinstance(geometry, Polygon):
+                coords = [list(geometry.exterior.coords)]
+            else:
+                coords = [list(poly.exterior.coords) for poly in geometry.geoms]
+            for coord in coords:
+                folium.Polygon(
+                    locations=[(lat, lon) for lon, lat in coord],
+                    color=cor_fazenda,
+                    fill=True,
+                    fill_color=cor_fazenda,
+                    fill_opacity=0.3,
+                    weight=2,
+                    popup=f"<b>Fazenda:</b> {fazenda_nome}<br><b>Atendida por:</b> {especialista_responsavel}"
+                ).add_to(fazendas_group)
+
+        distancia_km = row['DISTANCIA_KM']
+        popup_fazenda_html = (
+            f"<b>Fazenda:</b> {fazenda_nome}<br>"
+            f"<b>Cidade de Origem:</b> {cidade_origem}<br>"
+            f"<b>Atendida por:</b> {especialista_responsavel}<br>"
+            f"<b>Distância da Base:</b> {distancia_km:.1f} km"
+        )
+        folium.Marker(
+            location=[lat_unidade, lon_unidade],
+            icon=folium.Icon(color="white", icon_color=cor_fazenda, icon="home", prefix="fa"),
+            popup=folium.Popup(popup_fazenda_html, max_width=450, max_height=350),
+            tooltip=fazenda_nome
+        ).add_to(fazendas_group)
+
+        if mostrar_rotas and route_count < max_routes:
+            route_points = get_route(lon_base_colab, lat_base_colab, lon_unidade, lat_unidade)
+            if route_points:
+                line = LineString([(lon, lat) for lat, lon in route_points])
+                simplified_line = line.simplify(tolerance=0.001)
+                simplified_points = [(y, x) for x, y in simplified_line.coords]
+                folium.PolyLine(simplified_points, color=cor_fazenda, weight=2.5, opacity=0.8).add_to(rotas_group)
+                route_count += 1
+            time.sleep(0.3)
+
+    legenda_html = '''
+    <div style="position: fixed;
+    bottom: 10px; left: 10px; width: 250px; max-height: 300px;
+    border: 2px solid grey; z-index: 9999; font-size: 14px;
+    background-color: white; padding: 10px; border-radius: 8px;
+    overflow-y: auto;">
+    <b>Legenda de Especialistas</b><br>
+    '''
+    for esp, cor in cor_especialista.items():
+        if esp in df_filtrado["ESPECIALISTA"].unique():
+            legenda_html += f'<i class="fa fa-circle" style="color:{cor}"></i> {esp.title()}<br>'
+    legenda_html += "</div>"
+    mapa.get_root().html.add_child(folium.Element(legenda_html))
+
+    folium.LayerControl(collapsed=False).add_to(mapa)
+    return mapa
+
+# Título principal
+st.title("📍 Raio de Atuação dos Analistas")
+st.markdown("Selecione um gestor, especialista e visualize as unidades atendidas, distâncias e rotas no mapa. Use 'Todos' para ver a visão consolidada.")
+
+# Upload de arquivos na sidebar
+st.sidebar.header("Upload de Arquivos")
+kml_file = st.sidebar.file_uploader("📂 Upload KML", type=["kml"])
+xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=["xlsx", "xls"])
 
 # Definir df_analistas globalmente
 df_analistas = None
 
+# Processamento do mapa interativo
 if kml_file and xlsx_file:
     try:
-        kml_content = kml_file.read().decode('utf-8')
+        kml_content = kml_file.read()
         gdf_kml = extrair_dados_kml(kml_content)
-        gdf_kml['geometry'] = gdf_kml['geometry'].to_crs(epsg=4326)
-        gdf_kml[['Longitude', 'Latitude']] = gdf_kml.geometry.apply(lambda p: pd.Series([p.centroid.x, p.centroid.y]))
-        gdf_kml['UNIDADE_normalized'] = gdf_kml['NOME_FAZ'].apply(normalize_str)
-
-        df_analistas = pd.read_excel(xlsx_file)
-        df_analistas.columns = df_analistas.columns.str.strip().str.upper()
-
-        expected_columns = ['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'UNIDADE', 'COORDENADAS_CIDADE']
-        missing_columns = [col for col in expected_columns if col not in df_analistas.columns]
-        if missing_columns:
+        if gdf_kml.empty:
             st.markdown(
-                f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                f'❌ O arquivo Excel está faltando as colunas: {", ".join(missing_columns)}'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-            st.stop()
-
-        try:
-            df_analistas['COORDENADAS_CIDADE'] = df_analistas['COORDENADAS_CIDADE'].str.lstrip("'")
-            df_analistas[['LAT', 'LON']] = df_analistas['COORDENADAS_CIDADE'].str.split(',', expand=True).astype(float)
-        except Exception as e:
-            st.markdown(
-                f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                f'❌ Erro ao processar COORDENADAS_CIDADE. Use o formato "latitude,longitude" ou "\'latitude,longitude".'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-            st.stop()
-
-        df_analistas['UNIDADE_normalized'] = df_analistas['UNIDADE'].apply(normalize_str)
-        df_analistas['ESPECIALISTA'] = df_analistas['ESPECIALISTA'].apply(normalize_str)
-        df_analistas['GESTOR'] = df_analistas['GESTOR'].apply(normalize_str)
-        df_analistas['CIDADE_BASE'] = df_analistas['CIDADE_BASE'].apply(normalize_str)
-
-        def haversine(lon1, lat1, lon2, lat2):
-            R = 6371
-            lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
-            dlon = lon2 - lon1
-            dlat = lat2 - lat1
-            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-            c = 2 * math.asin(math.sqrt(a))
-            return R * c
-
-        df_analistas_grouped = df_analistas.groupby(['GESTOR', 'ESPECIALISTA', 'CIDADE_BASE', 'LAT', 'LON'])['UNIDADE_normalized'].apply(set).reset_index()
-        df_analistas_grouped['UNIDADE_normalized'] = df_analistas_grouped['UNIDADE_normalized'].apply(list)
-
-        df_merge = df_analistas_grouped.explode('UNIDADE_normalized').merge(
-            gdf_kml[['UNIDADE_normalized', 'Latitude', 'Longitude', 'geometry']],
-            on='UNIDADE_normalized',
-            how='left'
-        )
-        df_merge = df_merge.dropna(subset=['Latitude', 'Longitude'])
-
-        resultados = []
-        for (gestor, esp), df_sub in df_merge.groupby(['GESTOR', 'ESPECIALISTA']):
-            cidade_base = df_sub['CIDADE_BASE'].iloc[0]
-            base_coords = df_sub[['LAT', 'LON']].iloc[0]
-            unidades = list(set(df_sub['UNIDADE_normalized'].dropna()))
-            distancias = []
-            geometries = []
-
-            for unidade in unidades:
-                df_unidade = df_sub[df_sub['UNIDADE_normalized'] == unidade]
-                if not df_unidade.empty:
-                    lat = df_unidade['Latitude'].iloc[0]
-                    lon = df_unidade['Longitude'].iloc[0]
-                    dist = haversine(base_coords['LON'], base_coords['LAT'], lon, lat)
-                    distancias.append((unidade, round(dist, 1)))
-                    geometries.append(df_unidade['geometry'].iloc[0])
-
-            medias = sum([d[1] for d in distancias]) / len(distancias) if distancias else 0
-            max_dist = max([d[1] for d in distancias]) if distancias else 0
-
-            resultados.append({
-                'GESTOR': gestor,
-                'ESPECIALISTA': esp,
-                'CIDADE_BASE': cidade_base,
-                'LAT': base_coords['LAT'],
-                'LON': base_coords['LON'],
-                'UNIDADES_ATENDIDAS': unidades,
-                'DIST_MEDIA': round(medias, 1),
-                'DIST_MAX': round(max_dist, 1),
-                'DETALHES': distancias,
-                'GEOMETRIES': geometries if geometries else None
-            })
-        resultados = pd.DataFrame(resultados)
-
-        col1, _, _ = st.columns([1, 1, 1], gap="medium")
-        with col1:
-            st.markdown("### Seleção")
-            gestores = sorted(resultados['GESTOR'].unique())
-            gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
-            especialistas_filtrados = resultados[resultados['GESTOR'] == gestor_selecionado]
-            nomes_especialistas = ['Todos'] + sorted(especialistas_filtrados['ESPECIALISTA'].unique())
-            especialista_selecionado = st.selectbox("Especialista", options=nomes_especialistas, format_func=lambda x: x.title())
-
-            unidades_filtradas = []
-            if especialista_selecionado == 'Todos':
-                for ulist in especialistas_filtrados['UNIDADES_ATENDIDAS']:
-                    unidades_filtradas.extend(ulist)
-            else:
-                for ulist in especialistas_filtrados[especialistas_filtrados['ESPECIALISTA'] == especialista_selecionado]['UNIDADES_ATENDIDAS']:
-                    unidades_filtradas.extend(ulist)
-            unidades_filtradas = sorted(list(set(unidades_filtradas)))
-            fazenda_opcoes = ['Todos'] + [u.title() for u in unidades_filtradas]
-            fazenda_selecionada = st.selectbox("Fazenda", options=fazenda_opcoes)
-
-        def unidade_match(unitlist):
-            if fazenda_selecionada == 'Todos':
-                return True
-            return normalize_str(fazenda_selecionada) in [normalize_str(u) for u in unitlist]
-
-        mask = (resultados['GESTOR'] == gestor_selecionado)
-        if especialista_selecionado != 'Todos':
-            mask = mask & (resultados['ESPECIALISTA'] == especialista_selecionado)
-        resultados_filtrados = resultados[mask]
-        if fazenda_selecionada != 'Todos':
-            resultados_filtrados = resultados_filtrados[resultados_filtrados['UNIDADES_ATENDIDAS'].apply(unidade_match)]
-
-        if not resultados_filtrados.empty:
-            if especialista_selecionado == 'Todos':
-                with st.expander("🔍 Todos os especialistas do gestor selecionado", expanded=True):
-                    total_unidades = sum([len(row['UNIDADES_ATENDIDAS']) for _, row in resultados_filtrados.iterrows()])
-                    dist_medias = [row["DIST_MEDIA"] for _, row in resultados_filtrados.iterrows()]
-                    dist_maximos = [row["DIST_MAX"] for _, row in resultados_filtrados.iterrows()]
-                    cols = st.columns(3)
-                    cols[0].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Unidades Atendidas</div><div class="metric-value">{total_unidades}</div></div>',
-                        unsafe_allow_html=True
-                    )
-                    cols[1].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Distância Média Geral</div><div class="metric-value">{round(sum(dist_medias) / len(dist_medias),1) if dist_medias else 0} km</div></div>',
-                        unsafe_allow_html=True
-                    )
-                    cols[2].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Maior Raio</div><div class="metric-value">{max(dist_maximos) if dist_maximos else 0} km</div></div>',
-                        unsafe_allow_html=True
-                    )
-
-                    detalhes = []
-                    for _, row in resultados_filtrados.iterrows():
-                        for unidade, dist in row['DETALHES']:
-                            detalhes.append((row['ESPECIALISTA'].title(), unidade.title(), dist))
-                    detalhes_df = pd.DataFrame(detalhes, columns=['Especialista', 'Fazenda', 'Distância (km)'])
-                    st.markdown("**Detalhes por Especialista/Fazenda**")
-                    st.dataframe(detalhes_df, hide_index=True, use_container_width=True)
-
-                    m = folium.Map(location=[-14.2, -53.2], zoom_start=5.5, tiles="cartodbpositron")
-                    marker_cluster = MarkerCluster().add_to(m)
-                    for idx, (_, row) in enumerate(resultados_filtrados.iterrows()):
-                        color = PASTEL_COLORS[idx % len(PASTEL_COLORS)]
-                        folium.Marker(
-                            location=[row['LAT'], row['LON']],
-                            popup=folium.Popup(
-                                f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
-                                f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
-                                f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
-                                f"<b>Unidades:</b> {', '.join([u.title() for u in row['UNIDADES_ATENDIDAS']])}<br>"
-                                f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km",
-                                max_width=220
-                            ),
-                            icon=folium.Icon(color="blue", icon="user", prefix="fa", icon_color=color)
-                        ).add_to(marker_cluster)
-                        for unidade in row['UNIDADES_ATENDIDAS'][:50]:
-                            df_unidade = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade]
-                            if not df_unidade.empty:
-                                lat = df_unidade['Latitude'].iloc[0]
-                                lon = df_unidade['Longitude'].iloc[0]
-                                folium.Marker(
-                                    location=[lat, lon],
-                                    popup=folium.Popup(f"Unidade: {unidade.title()}", max_width=200),
-                                    icon=folium.Icon(color="green", icon="map-marker", prefix="fa", icon_color=color)
-                                ).add_to(marker_cluster)
-                    st.subheader("Mapa")
-                    st_folium(m, height=600, use_container_width=True)
-            else:
-                row = resultados_filtrados.iloc[0].to_dict()
-                with st.expander(f"🔍 {row['ESPECIALISTA'].title()} - {row['CIDADE_BASE'].title()}", expanded=True):
-                    cols = st.columns(3)
-                    cols[0].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Unidades Atendidas</div>'
-                        f'<div class="metric-value">{len(row["UNIDADES_ATENDIDAS"])}</div></div>',
-                        unsafe_allow_html=True
-                    )
-                    cols[1].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Distância Média</div>'
-                        f'<div class="metric-value">{row["DIST_MEDIA"]} km</div></div>',
-                        unsafe_allow_html=True
-                    )
-                    cols[2].markdown(
-                        f'<div class="metric-card"><div class="metric-title">Raio Máximo</div>'
-                        f'<div class="metric-value">{row["DIST_MAX"]} km</div></div>',
-                        unsafe_allow_html=True
-                    )
-
-                    detalhes_df = pd.DataFrame([(row['ESPECIALISTA'].title(), unidade.title(), dist) for unidade, dist in row['DETALHES']],
-                                              columns=['Especialista', 'Fazenda', 'Distância (km)'])
-                    st.markdown("**Detalhes por Fazenda (Unidade)**")
-                    st.dataframe(detalhes_df, hide_index=True, use_container_width=True)
-
-                    m = folium.Map(location=[row['LAT'], row['LON']], zoom_start=8, tiles="cartodbpositron")
-                    marker_cluster = MarkerCluster().add_to(m)
-                    folium.Marker(
-                        location=[row['LAT'], row['LON']],
-                        popup=folium.Popup(
-                            f"<b>Especialista:</b> {row['ESPECIALISTA'].title()}<br>"
-                            f"<b>Gestor:</b> {gestor_selecionado.title()}<br>"
-                            f"<b>Cidade Base:</b> {row['CIDADE_BASE'].title()}<br>"
-                            f"<b>Unidades:</b> {', '.join([u.title() for u in row['UNIDADES_ATENDIDAS']])}<br>"
-                            f"<b>Raio de Atuação:</b> {row['DIST_MAX']} km",
-                            max_width=220
-                        ),
-                        icon=folium.Icon(color="blue", icon="user", prefix="fa", icon_color="#2196F3")
-                    ).add_to(marker_cluster)
-                    for unidade in row['UNIDADES_ATENDIDAS'][:50]:
-                        df_unidade = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade]
-                        if not df_unidade.empty:
-                            lat = df_unidade['Latitude'].iloc[0]
-                            lon = df_unidade['Longitude'].iloc[0]
-                            folium.Marker(
-                                location=[lat, lon],
-                                popup=folium.Popup(f"Unidade: {unidade.title()}", max_width=200),
-                                icon=folium.Icon(color="green", icon="map-marker", prefix="fa", icon_color="#4CAF50")
-                            ).add_to(marker_cluster)
-                    folium.Circle(
-                        location=[row['LAT'], row['LON']],
-                        radius=row['DIST_MAX'] * 1000,
-                        color='#2196F3',
-                        fill=True,
-                        fill_opacity=0.14,
-                        weight=2,
-                        popup=f"Raio de atuação: {row['DIST_MAX']} km"
-                    ).add_to(m)
-                    st.subheader("Mapa")
-                    st_folium(m, height=600, use_container_width=True)
-        else:
-            st.markdown(
-                '<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
-                '⚠️ Nenhum dado encontrado para o filtro selecionado.'
+                '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                '❌ Nenhuma geometria válida encontrada no KML.'
                 '</div>',
                 unsafe_allow_html=True
             )
+            st.stop()
+
+        df_analistas = pd.read_excel(xlsx_file)
+        df_analistas.columns = df_analistas.columns.str.strip()
+
+        # Seleção de filtros
+        st.markdown("### Seleção")
+        gestores = ["Todos"] + sorted(df_analistas["GESTOR"].apply(normalize_str).unique().tolist())
+        especialistas = ["Todos"] + sorted(df_analistas["ESPECIALISTA"].apply(normalize_str).unique().tolist())
+        col1, col2, col3 = st.columns([1, 1, 1], gap="medium")
+        with col1:
+            gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
+        with col2:
+            especialista_selecionado = st.selectbox("Especialista", options=especialistas, format_func=lambda x: x.title())
+        with col3:
+            mostrar_rotas = st.checkbox("Mostrar Rotas", value=False)
+
+        # Criar e exibir o mapa
+        mapa = criar_mapa_analistas(df_analistas, gdf_kml, gestor_selecionado, especialista_selecionado, mostrar_rotas)
+        if mapa:
+            st.subheader("Mapa Interativo")
+            st_folium(mapa, height=600, use_container_width=True)
+
     except Exception as e:
         st.markdown(
             f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
@@ -504,7 +524,7 @@ if kml_file and xlsx_file:
 else:
     st.info("ℹ️ Por favor, faça upload dos arquivos KML e Excel na barra lateral para continuar.")
 
-# ========================= BLOCO DE ANÁLISE DE CIDADE MAIS PRÓXIMA (DETALHADO) =========================
+# Análise de Cidade Mais Próxima
 st.markdown("---")
 st.header("🏙️ Análise Avançada de Cidade Mais Próxima da Unidade (Fazenda)")
 
@@ -514,7 +534,7 @@ if show_import:
     st.sidebar.markdown("### (Opcional) Cidade mais próxima")
     geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=["geojson"])
 
-if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
+if kml_file and xlsx_file and geojson_file and df_analistas is not None:
     try:
         cidades_data = json.load(geojson_file)
         cidades_lista = []
@@ -531,14 +551,14 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
             })
         df_cidades = pd.DataFrame(cidades_lista)
         
-        unidades_opcoes = sorted(set(df_analistas["UNIDADE"].unique()))
+        unidades_opcoes = sorted(set(df_analistas["UNIDADE"].apply(normalize_str).unique()))
         unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda) para análise:", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
         unidade_norm = normalize_str(unidade_sel)
 
         unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
         if not unidade_row.empty:
-            uni_lat = unidade_row['Latitude'].iloc[0]
-            uni_lon = unidade_row['Longitude'].iloc[0]
+            uni_lat = unidade_row['Latitude_Unidade'].iloc[0]
+            uni_lon = unidade_row['Longitude_Unidade'].iloc[0]
 
             def haversine_m(lon1, lat1, lon2, lat2):
                 R = 6371000
@@ -563,7 +583,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                 unsafe_allow_html=True
             )
 
-            # Mapa interativo
             m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, tiles="cartodbpositron")
             folium.Marker(
                 location=[uni_lat, uni_lon],
@@ -579,7 +598,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                           color="#b5ead7", weight=3, dash_array="5,10").add_to(m)
             st_folium(m, width=None, height=350, use_container_width=True)
 
-            # Lógica de análise de analistas
             def find_matching_city(cidade_base, cidade_norm, threshold=90):
                 return fuzz.ratio(cidade_base, cidade_norm) >= threshold
 
@@ -592,7 +610,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
             analistas_moram_nao_atendem = analistas_cidade[~analistas_cidade["UNIDADE_normalized"].isin([unidade_norm])]
             analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
 
-            # Seção 1: Analistas que moram na cidade e atendem a fazenda
             st.markdown(
                 f'#### 🟢 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
                 unsafe_allow_html=True
@@ -624,7 +641,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                     unsafe_allow_html=True
                 )
 
-            # Seção 2: Analistas que moram na cidade e NÃO atendem a fazenda
             st.markdown(
                 f'#### 🟡 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>não atendem</b></span> esta fazenda:',
                 unsafe_allow_html=True
@@ -657,7 +673,6 @@ if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
                     unsafe_allow_html=True
                 )
 
-            # Seção 3: Caso não haja analistas na cidade mais próxima
             if analistas_moram_atendem.empty:
                 st.markdown(
                     f'<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
