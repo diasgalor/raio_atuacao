@@ -534,7 +534,7 @@ if show_import:
     st.sidebar.markdown("### (Opcional) Cidade mais próxima")
     geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=["geojson"])
 
-if kml_file and xlsx_file and geojson_file and df_analistas is not None:
+if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
     try:
         cidades_data = json.load(geojson_file)
         cidades_lista = []
@@ -551,14 +551,14 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
             })
         df_cidades = pd.DataFrame(cidades_lista)
         
-        unidades_opcoes = sorted(set(df_analistas["UNIDADE"].apply(normalize_str).unique()))
+        unidades_opcoes = sorted(set(df_analistas["UNIDADE"].unique()))
         unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda) para análise:", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
         unidade_norm = normalize_str(unidade_sel)
 
         unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
         if not unidade_row.empty:
-            uni_lat = unidade_row['Latitude_Unidade'].iloc[0]
-            uni_lon = unidade_row['Longitude_Unidade'].iloc[0]
+            uni_lat = unidade_row['Latitude'].iloc[0]
+            uni_lon = unidade_row['Longitude'].iloc[0]
 
             def haversine_m(lon1, lat1, lon2, lat2):
                 R = 6371000
@@ -583,6 +583,7 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
                 unsafe_allow_html=True
             )
 
+            # Mapa interativo
             m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, tiles="cartodbpositron")
             folium.Marker(
                 location=[uni_lat, uni_lon],
@@ -598,6 +599,7 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
                           color="#b5ead7", weight=3, dash_array="5,10").add_to(m)
             st_folium(m, width=None, height=350, use_container_width=True)
 
+            # Lógica de análise de analistas
             def find_matching_city(cidade_base, cidade_norm, threshold=90):
                 return fuzz.ratio(cidade_base, cidade_norm) >= threshold
 
@@ -610,6 +612,7 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
             analistas_moram_nao_atendem = analistas_cidade[~analistas_cidade["UNIDADE_normalized"].isin([unidade_norm])]
             analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
 
+            # Seção 1: Analistas que moram na cidade e atendem a fazenda
             st.markdown(
                 f'#### 🟢 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
                 unsafe_allow_html=True
@@ -641,6 +644,7 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
                     unsafe_allow_html=True
                 )
 
+            # Seção 2: Analistas que moram na cidade e NÃO atendem a fazenda
             st.markdown(
                 f'#### 🟡 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>não atendem</b></span> esta fazenda:',
                 unsafe_allow_html=True
@@ -673,6 +677,7 @@ if kml_file and xlsx_file and geojson_file and df_analistas is not None:
                     unsafe_allow_html=True
                 )
 
+            # Seção 3: Caso não haja analistas na cidade mais próxima
             if analistas_moram_atendem.empty:
                 st.markdown(
                     f'<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
