@@ -14,8 +14,9 @@ import json
 from shapely.geometry import shape
 from fuzzywuzzy import fuzz
 from streamlit_folium import st_folium
+import sqlite3
 
-# Configuração da página
+# Configuração da página (apenas uma vez, no início)
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # CSS para responsividade
@@ -223,6 +224,15 @@ def haversine(lon1, lat1, lon2, lat2):
     except Exception:
         return None
 
+def haversine_m(lon1, lat1, lon2, lat2):
+    R = 6371000
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2*math.asin(math.sqrt(a))
+    return R * c
+
 def get_route(start_lon, start_lat, end_lon, end_lat):
     try:
         url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=geojson"
@@ -238,6 +248,70 @@ def get_route(start_lon, start_lat, end_lon, end_lat):
         return points
     except Exception:
         return None
+
+def criar_banco():
+    conn = sqlite3.connect('mapa_dados.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS especialistas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE, gestor TEXT, cidade_base TEXT,
+        latitude_base REAL, longitude_base REAL
+    )''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS fazendas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome_fazenda TEXT, especialista_id INTEGER,
+        geometria_json TEXT, latitude_centroide REAL, longitude_centroide REAL,
+        FOREIGN KEY (especialista_id) REFERENCES especialistas (id)
+    )''')
+    conn.commit()
+    conn.close()
+    return "Banco de dados 'mapa_dados.db' e tabelas criadas com sucesso!"
+
+def migrar(kml_file, xlsx_file):
+    conn = sqlite3.connect('mapa_dados.db')
+    cursor = conn.cursor()
+
+    # Processar Excel
+    df_analistas = pd.read_excel(xlsx_file)
+    df_analistas.columns = [normalize_str(col) for col in df_analistas.columns]
+    coords = df_analistas["COORDENADAS_CIDADE"].astype(str).str.replace("'", "").str.split(",", expand=True)
+    df_analistas["LAT_BASE"] = pd.to_numeric(coords[0], errors="coerce")
+    df_analistas["LON_BASE"] = pd.to_numeric(coords[1], errors="coerce")
+    df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
+
+    especialistas_unicos = df_analistas.drop_duplicates(subset=['ESPECIALISTA'])
+    for _, row in especialistas_unicos.iterrows():
+        cursor.execute(
+            "INSERT OR IGNORE INTO especialistas (nome, gestor, cidade_base, latitude_base, longitude_base) VALUES (?, ?, ?, ?, ?)",
+            (normalize_str(row['ESPECIALISTA']), normalize_str(row['GESTOR']), normalize_str(row['CIDADE_BASE']), row['LAT_BASE'], row['LON_BASE'])
+        )
+    conn.commit()
+
+    # Processar KML
+    kml_content = kml_file.read()
+    gdf_kml = extrair_dados_kml(kml_content)
+    gdf_kml["UNIDADE_normalized"] = gdf_kml["NOME_FAZ"].apply(normalize_str)
+
+    # Juntar e inserir fazendas
+    df_merged = pd.merge(
+        df_analistas, gdf_kml,
+        on="UNIDADE_normalized", how="inner"
+    )
+    for _, row in df_merged.iterrows():
+        cursor.execute("SELECT id FROM especialistas WHERE nome = ?", (normalize_str(row['ESPECIALISTA']),))
+        result = cursor.fetchone()
+        if result:
+            especialista_id = result[0]
+            geometria_geojson = row['geometry'].to_json()
+            cursor.execute(
+                "INSERT INTO fazendas (nome_fazenda, especialista_id, geometria_json, latitude_centroide, longitude_centroide) VALUES (?, ?, ?, ?, ?)",
+                (row['NOME_FAZ'], especialista_id, geometria_geojson, row['geometry'].centroid.y, row['geometry'].centroid.x)
+            )
+    conn.commit()
+    conn.close()
+    return df_analistas, gdf_kml, f"{len(especialistas_unicos)} especialistas e {len(df_merged)} fazendas inseridos!"
 
 def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_rotas):
     if gdf_kml.empty:
@@ -469,172 +543,10 @@ def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_ro
 
 # Título principal
 st.title("📍 Raio de Atuação dos Analistas")
-st.markdown("Selecione um gestor, especialista e visualize as unidades atendidas, distâncias e rotas no mapa. Use 'Todos' para ver a visão consolidada.")
-
-# Upload de arquivos na sidebar
-st.sidebar.header("Upload de Arquivos")
-kml_file = st.sidebar.file_uploader("📂 Upload KML", type=["kml"])
-xlsx_file = st.sidebar.file_uploader("📊 Upload Excel", type=["xlsx", "xls"])
-
-# Definir df_analistas globalmente
-df_analistas = None
-
-# Processamento do mapa interativo
-if kml_file and xlsx_file:
-    try:
-        kml_content = kml_file.read()
-        gdf_kml = extrair_dados_kml(kml_content)
-        if gdf_kml.empty:
-            st.markdown(
-                '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                '❌ Nenhuma geometria válida encontrada no KML.'
-                '</div>',
-                unsafe_allow_html=True
-            )
-            st.stop()
-
-        df_analistas = pd.read_excel(xlsx_file)
-        df_analistas.columns = df_analistas.columns.str.strip()
-
-        # Seleção de filtros
-        st.markdown("### Seleção")
-        gestores = ["Todos"] + sorted(df_analistas["GESTOR"].apply(normalize_str).unique().tolist())
-        especialistas = ["Todos"] + sorted(df_analistas["ESPECIALISTA"].apply(normalize_str).unique().tolist())
-        col1, col2, col3 = st.columns([1, 1, 1], gap="medium")
-        with col1:
-            gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title())
-        with col2:
-            especialista_selecionado = st.selectbox("Especialista", options=especialistas, format_func=lambda x: x.title())
-        with col3:
-            mostrar_rotas = st.checkbox("Mostrar Rotas", value=False)
-
-        # Criar e exibir o mapa
-        mapa = criar_mapa_analistas(df_analistas, gdf_kml, gestor_selecionado, especialista_selecionado, mostrar_rotas)
-        if mapa:
-            st.subheader("Mapa Interativo")
-            st_folium(mapa, height=600, use_container_width=True)
-
-    except Exception as e:
-        st.markdown(
-            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-            f'❌ Erro ao processar os arquivos: {str(e)}'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-else:
-    st.info("ℹ️ Por favor, faça upload dos arquivos KML e Excel na barra lateral para continuar.")
-
-# Análise de Cidade Mais Próxima
-st.markdown("---")
-import streamlit as st
-import sqlite3
-import pandas as pd
-import geopandas as gpd
-from shapely.geometry import Polygon
-import xml.etree.ElementTree as ET
-from unidecode import unidecode
-import json
-from shapely.geometry import shape
-import math
-import folium
-from streamlit_folium import st_folium
-from thefuzz import fuzz
-
-# Funções auxiliares do script original
-def extrair_dados_kml(kml_bytes):
-    tree = ET.fromstring(kml_bytes.decode('utf-8'))
-    ns = {'kml': 'http://www.opengis.net/kml/2.2'}
-    dados = []
-    for placemark in tree.findall('.//kml:Placemark', ns):
-        nome_fazenda = placemark.find('kml:name', ns).text
-        coords_text = placemark.find('.//kml:coordinates', ns).text.strip()
-        coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
-        polygon = Polygon([(c[0], c[1]) for c in coords])
-        dados.append({'NOME_FAZ': nome_fazenda, 'geometry': polygon})
-    return gpd.GeoDataFrame(dados, crs="EPSG:4326")
-
-def normalize_str(s):
-    return unidecode(str(s).strip().upper()) if pd.notna(s) else ""
-
-def criar_banco():
-    conn = sqlite3.connect('mapa_dados.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS especialistas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT UNIQUE, gestor TEXT, cidade_base TEXT,
-        latitude_base REAL, longitude_base REAL
-    )''')
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS fazendas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome_fazenda TEXT, especialista_id INTEGER,
-        geometria_json TEXT, latitude_centroide REAL, longitude_centroide REAL,
-        FOREIGN KEY (especialista_id) REFERENCES especialistas (id)
-    )''')
-    conn.commit()
-    conn.close()
-    return "Banco de dados 'mapa_dados.db' e tabelas criadas com sucesso!"
-
-def migrar(kml_file, xlsx_file):
-    conn = sqlite3.connect('mapa_dados.db')
-    cursor = conn.cursor()
-
-    # Processar Excel
-    df_analistas = pd.read_excel(xlsx_file)
-    df_analistas.columns = [normalize_str(col) for col in df_analistas.columns]
-    coords = df_analistas["COORDENADAS_CIDADE"].astype(str).str.replace("'", "").str.split(",", expand=True)
-    df_analistas["LAT_BASE"] = pd.to_numeric(coords[0], errors="coerce")
-    df_analistas["LON_BASE"] = pd.to_numeric(coords[1], errors="coerce")
-    df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
-
-    especialistas_unicos = df_analistas.drop_duplicates(subset=['ESPECIALISTA'])
-    for _, row in especialistas_unicos.iterrows():
-        cursor.execute(
-            "INSERT OR IGNORE INTO especialistas (nome, gestor, cidade_base, latitude_base, longitude_base) VALUES (?, ?, ?, ?, ?)",
-            (normalize_str(row['ESPECIALISTA']), normalize_str(row['GESTOR']), normalize_str(row['CIDADE_BASE']), row['LAT_BASE'], row['LON_BASE'])
-        )
-    conn.commit()
-
-    # Processar KML
-    kml_content = kml_file.read()
-    gdf_kml = extrair_dados_kml(kml_content)
-    gdf_kml["UNIDADE_normalized"] = gdf_kml["NOME_FAZ"].apply(normalize_str)
-
-    # Juntar e inserir fazendas
-    df_merged = pd.merge(
-        df_analistas, gdf_kml,
-        on="UNIDADE_normalized", how="inner"
-    )
-    for _, row in df_merged.iterrows():
-        cursor.execute("SELECT id FROM especialistas WHERE nome = ?", (normalize_str(row['ESPECIALISTA']),))
-        result = cursor.fetchone()
-        if result:
-            especialista_id = result[0]
-            geometria_geojson = row['geometry'].to_json()
-            cursor.execute(
-                "INSERT INTO fazendas (nome_fazenda, especialista_id, geometria_json, latitude_centroide, longitude_centroide) VALUES (?, ?, ?, ?, ?)",
-                (row['NOME_FAZ'], especialista_id, geometria_geojson, row['geometry'].centroid.y, row['geometry'].centroid.x)
-            )
-    conn.commit()
-    conn.close()
-    return df_analistas, gdf_kml, f"{len(especialistas_unicos)} especialistas e {len(df_merged)} fazendas inseridos!"
-
-def haversine_m(lon1, lat1, lon2, lat2):
-    R = 6371000
-    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
-    c = 2*math.asin(math.sqrt(a))
-    return R * c
-
-# Interface Streamlit
-st.set_page_config(page_title="Análise de Fazendas e Cidades", layout="wide")
-st.title("🌾 Sistema de Análise de Fazendas e Cidades")
+st.markdown("Selecione um gestor, especialista ou visualize as cidades mais próximas das unidades. Use 'Todos' para ver a visão consolidada.")
 
 # Abas
-tab1, tab2 = st.tabs(["📤 Upload e Migração", "🏙️ Análise de Cidades"])
+tab1, tab2, tab3 = st.tabs(["📤 Upload e Migração", "🗺️ Mapa de Analistas", "🏙️ Análise de Cidades"])
 
 # Aba 1: Upload e Migração
 with tab1:
@@ -656,8 +568,35 @@ with tab1:
         else:
             st.error("Por favor, faça upload dos arquivos KML e Excel.")
 
-# Aba 2: Análise de Cidades
+# Aba 2: Mapa de Analistas
 with tab2:
+    st.header("🗺️ Mapa Interativo de Analistas")
+    if 'df_analistas' in st.session_state and 'gdf_kml' in st.session_state:
+        df_analistas = st.session_state['df_analistas']
+        gdf_kml = st.session_state['gdf_kml']
+        
+        # Seleção de filtros
+        st.markdown("### Seleção")
+        gestores = ["Todos"] + sorted(df_analistas["GESTOR"].apply(normalize_str).unique().tolist())
+        especialistas = ["Todos"] + sorted(df_analistas["ESPECIALISTA"].apply(normalize_str).unique().tolist())
+        col1, col2, col3 = st.columns([1, 1, 1], gap="medium")
+        with col1:
+            gestor_selecionado = st.selectbox("Gestor", options=gestores, format_func=lambda x: x.title(), key="gestor_mapa")
+        with col2:
+            especialista_selecionado = st.selectbox("Especialista", options=especialistas, format_func=lambda x: x.title(), key="especialista_mapa")
+        with col3:
+            mostrar_rotas = st.checkbox("Mostrar Rotas", value=False, key="mostrar_rotas")
+
+        # Criar e exibir o mapa
+        mapa = criar_mapa_analistas(df_analistas, gdf_kml, gestor_selecionado, especialista_selecionado, mostrar_rotas)
+        if mapa:
+            st.subheader("Mapa Interativo")
+            st_folium(mapa, height=600, use_container_width=True)
+    else:
+        st.info("ℹ️ Para visualizar o mapa, faça upload dos arquivos KML e Excel e realize a migração na primeira aba.")
+
+# Aba 3: Análise de Cidades
+with tab3:
     st.header("🏙️ Análise das 3 Cidades Mais Próximas da Unidade")
     show_import = st.checkbox("👁️ Exibir upload de GeoJSON", value=True)
     geojson_file = None
