@@ -304,7 +304,7 @@ def migrar(kml_file, xlsx_file):
         conn.close()
         return df_analistas, gdf_kml, "Erro na migração: UNIDADE_normalized ausente."
 
-    # Correspondência fuzzy para lidar com diferenças como "PALMEIRA SEDE X" vs "PALMEIRA"
+    # Correspondência fuzzy
     df_merged = pd.DataFrame()
     for _, row in df_analistas.iterrows():
         unidade_norm = row["UNIDADE_normalized"]
@@ -320,6 +320,13 @@ def migrar(kml_file, xlsx_file):
         conn.close()
         return df_analistas, gdf_kml, "Erro na migração: Nenhuma correspondência encontrada."
 
+    # Verificar se UNIDADE_normalized está presente após o merge
+    if 'UNIDADE_normalized' not in df_merged.columns:
+        st.error("Coluna 'UNIDADE_normalized' não encontrada no DataFrame mesclado.")
+        st.write("Colunas disponíveis em df_merged:", df_merged.columns.tolist())
+        conn.close()
+        return df_analistas, gdf_kml, "Erro na migração: UNIDADE_normalized ausente após merge."
+
     for _, row in df_merged.iterrows():
         cursor.execute("SELECT id FROM especialistas WHERE nome = ?", (normalize_str(row['ESPECIALISTA']),))
         result = cursor.fetchone()
@@ -334,6 +341,10 @@ def migrar(kml_file, xlsx_file):
             )
     conn.commit()
     conn.close()
+    
+    # Armazenar no session_state apenas se tudo estiver correto
+    st.session_state['df_analistas'] = df_analistas
+    st.session_state['gdf_kml'] = gdf_kml
     return df_analistas, gdf_kml, f"{len(especialistas_unicos)} especialistas e {len(df_merged)} fazendas inseridos!"
 
 def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_rotas, mostrar_raio):
