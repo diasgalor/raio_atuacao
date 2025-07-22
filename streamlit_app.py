@@ -196,8 +196,18 @@ def extrair_dados_kml(kml_bytes):
             **info["props"]
         } for unidade, info in dados.items()]
         gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
+        
+        # Reprojetar para UTM dinamicamente com base na longitude média
+        if not gdf.empty:
+            lon_mean = gdf.geometry.centroid.x.mean()
+            utm_zone = int((lon_mean + 180) / 6) + 1
+            hemisphere = 'south' if gdf.geometry.centroid.y.mean() < 0 else 'north'
+            utm_crs = f"EPSG:327{utm_zone}" if hemisphere == 'south' else f"EPSG:326{utm_zone}"
+            gdf = gdf.to_crs(utm_crs)
+            st.write(f"Geometrias reprojetadas para CRS: {utm_crs}")
+        
         # Depuração: exibir os valores de UNIDADE_normalized
-        st.write("Valores de UNIDADE_normalized no KML:", gdf["UNIDADE_normalized"].tolist())
+        st.write("Valores de UNIDADE_normalized no KML:", gdf["UNIDADE_normalized"].unique().tolist())
         return gdf
     except Exception as e:
         st.markdown(
@@ -321,10 +331,12 @@ def migrar(kml_file, xlsx_file):
         if result:
             especialista_id = result[0]
             geometry = row['geometry']
-            geometria_geojson = gpd.GeoSeries([geometry], crs="EPSG:4326").to_json()
+            # Converter geometria para EPSG:4326 para armazenamento
+            geometry_4326 = gpd.GeoSeries([geometry], crs=gdf_kml.crs).to_crs("EPSG:4326").iloc[0]
+            geometria_geojson = gpd.GeoSeries([geometry_4326], crs="EPSG:4326").to_json()
             cursor.execute(
                 "INSERT INTO fazendas (nome_fazenda, especialista_id, geometria_json, latitude_centroide, longitude_centroide) VALUES (?, ?, ?, ?, ?)",
-                (row['NOME_FAZ'], especialista_id, geometria_geojson, row['geometry'].centroid.y, row['geometry'].centroid.x)
+                (row['NOME_FAZ'], especialista_id, geometria_geojson, geometry_4326.centroid.y, geometry_4326.centroid.x)
             )
     conn.commit()
     conn.close()
@@ -627,10 +639,11 @@ with tab3:
             if 'UNIDADE_normalized' not in gdf_kml.columns:
                 st.markdown(
                     f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                    f'❌ Coluna "UNIDADE_normalized" não encontrada no KML. Verifique o arquivo KML.'
+                    f'❌ Coluna "UNIDADE_normalized" não encontrada no KML. Verifique se o arquivo KML contém o campo "NOME_FAZ".'
                     f'</div>',
                     unsafe_allow_html=True
                 )
+                st.write("Colunas disponíveis no gdf_kml:", gdf_kml.columns.tolist())
                 st.stop()
             
             cidades_data = json.load(geojson_file)
@@ -659,13 +672,16 @@ with tab3:
                     f'</div>',
                     unsafe_allow_html=True
                 )
-                st.write("Unidades disponíveis no KML:", gdf_kml["UNIDADE_normalized"].tolist())
+                st.write("Unidades disponíveis no KML (UNIDADE_normalized):", gdf_kml["UNIDADE_normalized"].unique().tolist())
                 st.stop()
 
             unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
             if not unidade_row.empty:
-                uni_lat = unidade_row['geometry'].centroid.y.iloc[0]
-                uni_lon = unidade_row['geometry'].centroid.x.iloc[0]
+                # Calcular centroide em CRS projetado e converter de volta para EPSG:4326 para o mapa
+                centroid_utm = unidade_row['geometry'].centroid.iloc[0]
+                unidade_row_4326 = unidade_row.to_crs("EPSG:4326")
+                uni_lat = unidade_row_4326['geometry'].centroid.y.iloc[0]
+                uni_lon = unidade_row_4326['geometry'].centroid.x.iloc[0]
 
                 # Calcular distâncias para todas as cidades
                 df_cidades["DIST_METROS"] = df_cidades.apply(
