@@ -304,7 +304,9 @@ def migrar(kml_file, xlsx_file):
         result = cursor.fetchone()
         if result:
             especialista_id = result[0]
-            geometria_geojson = row['geometry'].to_json()
+            # Serializar a geometria usando GeoSeries
+            geometry = row['geometry']
+            geometria_geojson = gpd.GeoSeries([geometry], crs="EPSG:4326").to_json()
             cursor.execute(
                 "INSERT INTO fazendas (nome_fazenda, especialista_id, geometria_json, latitude_centroide, longitude_centroide) VALUES (?, ?, ?, ?, ?)",
                 (row['NOME_FAZ'], especialista_id, geometria_geojson, row['geometry'].centroid.y, row['geometry'].centroid.x)
