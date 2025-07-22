@@ -127,12 +127,7 @@ st.markdown("""
 def extrair_dados_kml(kml_bytes):
     try:
         if not kml_bytes:
-            st.markdown(
-                '<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                '❌ Arquivo KML vazio ou inválido.'
-                '</div>',
-                unsafe_allow_html=True
-            )
+            st.error("Arquivo KML vazio ou inválido.")
             return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
         kml_string = kml_bytes.decode("utf-8")
         tree = ET.fromstring(kml_string)
@@ -143,6 +138,9 @@ def extrair_dados_kml(kml_bytes):
             props = {sd.get("name"): sd.text for sd in placemark.findall(".//kml:SimpleData", ns)}
             name_elem = placemark.find("kml:name", ns)
             props["Name"] = name_elem.text if name_elem is not None else "Sem Nome"
+            nome_faz = props.get("NOME_FAZ", props.get("Name", "Unidade Desconhecida"))
+            props["UNIDADE_normalized"] = normalize_str(nome_faz)  # Garantir criação da coluna
+            # ... resto do código ...
             geometry = None
             coord_tags = {
                 "Polygon": ".//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates",
