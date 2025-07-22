@@ -282,6 +282,8 @@ def migrar(kml_file, xlsx_file):
     df_analistas["LAT_BASE"] = pd.to_numeric(coords[0], errors="coerce")
     df_analistas["LON_BASE"] = pd.to_numeric(coords[1], errors="coerce")
     df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
+    # Depuração: exibir valores de UNIDADE_normalized no Excel
+    st.write("Valores de UNIDADE_normalized no Excel:", df_analistas["UNIDADE_normalized"].unique().tolist())
 
     especialistas_unicos = df_analistas.drop_duplicates(subset=['ESPECIALISTA'])
     for _, row in especialistas_unicos.iterrows():
@@ -294,19 +296,30 @@ def migrar(kml_file, xlsx_file):
     # Processar KML
     kml_content = kml_file.read()
     gdf_kml = extrair_dados_kml(kml_content)
-    gdf_kml["UNIDADE_normalized"] = gdf_kml["NOME_FAZ"].apply(normalize_str)
+    if 'UNIDADE_normalized' not in gdf_kml.columns:
+        st.error("Coluna 'UNIDADE_normalized' não encontrada no KML após processamento. Verifique o arquivo KML.")
+        conn.close()
+        return df_analistas, gdf_kml, "Erro na migração: UNIDADE_normalized ausente."
+    # Depuração: exibir valores de UNIDADE_normalized no KML
+    st.write("Valores de UNIDADE_normalized no KML:", gdf_kml["UNIDADE_normalized"].unique().tolist())
 
     # Juntar e inserir fazendas
     df_merged = pd.merge(
         df_analistas, gdf_kml,
         on="UNIDADE_normalized", how="inner"
     )
+    if df_merged.empty:
+        st.warning("Nenhuma correspondência encontrada entre Excel e KML. Verifique se os nomes em 'UNIDADE' (Excel) correspondem a 'NOME_FAZ' (KML).")
+        st.write("Exemplo de UNIDADE_normalized no Excel:", df_analistas["UNIDADE_normalized"].head().tolist())
+        st.write("Exemplo de UNIDADE_normalized no KML:", gdf_kml["UNIDADE_normalized"].head().tolist())
+        conn.close()
+        return df_analistas, gdf_kml, "Erro na migração: Nenhuma correspondência encontrada."
+
     for _, row in df_merged.iterrows():
         cursor.execute("SELECT id FROM especialistas WHERE nome = ?", (normalize_str(row['ESPECIALISTA']),))
         result = cursor.fetchone()
         if result:
             especialista_id = result[0]
-            # Serializar a geometria usando GeoSeries
             geometry = row['geometry']
             geometria_geojson = gpd.GeoSeries([geometry], crs="EPSG:4326").to_json()
             cursor.execute(
