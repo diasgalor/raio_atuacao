@@ -611,6 +611,15 @@ with tab3:
         df_analistas = st.session_state['df_analistas']
         gdf_kml = st.session_state['gdf_kml']
         try:
+            if 'UNIDADE_normalized' not in gdf_kml.columns:
+                st.markdown(
+                    f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                    f'❌ Coluna "UNIDADE_normalized" não encontrada no KML. Verifique o arquivo KML.'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                st.stop()
+            
             cidades_data = json.load(geojson_file)
             cidades_lista = []
             for feat in cidades_data["features"]:
@@ -629,6 +638,16 @@ with tab3:
             unidades_opcoes = sorted(set(df_analistas["UNIDADE"].unique()))
             unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda):", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
             unidade_norm = normalize_str(unidade_sel)
+
+            if unidade_norm not in gdf_kml['UNIDADE_normalized'].values:
+                st.markdown(
+                    f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                    f'❗ Unidade "{unidade_sel}" (normalizada: "{unidade_norm}") não encontrada no KML. Verifique se o nome corresponde ao campo "NOME_FAZ".'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                st.write("Unidades disponíveis no KML:", gdf_kml["UNIDADE_normalized"].tolist())
+                st.stop()
 
             unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
             if not unidade_row.empty:
