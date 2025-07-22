@@ -312,6 +312,7 @@ def migrar(kml_file, xlsx_file):
         return df_analistas, gdf_kml, "Erro na migração: UNIDADE_normalized ausente."
     # Depuração: exibir valores de UNIDADE_normalized no KML
     st.write("Valores de UNIDADE_normalized no KML:", gdf_kml["UNIDADE_normalized"].unique().tolist())
+    st.write(f"CRS do gdf_kml após extrair_dados_kml: {gdf_kml.crs}")
 
     # Juntar e inserir fazendas
     df_merged = pd.merge(
@@ -341,7 +342,6 @@ def migrar(kml_file, xlsx_file):
     conn.commit()
     conn.close()
     return df_analistas, gdf_kml, f"{len(especialistas_unicos)} especialistas e {len(df_merged)} fazendas inseridos!"
-
 def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_rotas):
     if gdf_kml.empty:
         st.markdown(
