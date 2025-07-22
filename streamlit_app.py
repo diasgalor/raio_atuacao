@@ -134,7 +134,7 @@ def extrair_dados_kml(kml_bytes):
                 '</div>',
                 unsafe_allow_html=True
             )
-            return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
+            return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
         kml_string = kml_bytes.decode("utf-8")
         tree = ET.fromstring(kml_string)
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
@@ -172,7 +172,7 @@ def extrair_dados_kml(kml_bytes):
                         )
                         continue
             if geometry:
-                nome_faz = props.get("NOME_FAZ", props.get("Name"))
+                nome_faz = props.get("NOME_FAZ", props.get("Name", "Unidade Desconhecida"))
                 props["NOME_FAZ"] = nome_faz
                 unidade = nome_faz
                 if unidade not in dados:
@@ -187,12 +187,13 @@ def extrair_dados_kml(kml_bytes):
                 '</div>',
                 unsafe_allow_html=True
             )
-            return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
+            return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
 
         gdf_data = [{
             "Name": unidade,
             "geometry": unary_union(info["geometries"]),
-            "NOME_FAZ": info["props"].get("NOME_FAZ", info["props"].get("Name")),
+            "NOME_FAZ": info["props"].get("NOME_FAZ", info["props"].get("Name", "Unidade Desconhecida")),
+            "UNIDADE_normalized": normalize_str(info["props"].get("NOME_FAZ", info["props"].get("Name", "Unidade Desconhecida"))),
             **info["props"]
         } for unidade, info in dados.items()]
         gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
@@ -204,7 +205,7 @@ def extrair_dados_kml(kml_bytes):
             f'</div>',
             unsafe_allow_html=True
         )
-        return gpd.GeoDataFrame(columns=['Name', 'geometry'], crs="EPSG:4326")
+        return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
 
 def normalize_str(s):
     try:
