@@ -342,13 +342,15 @@ def criar_mapa_analistas(df_analistas, gdf_kml, gestor, especialista, mostrar_ro
         st.error("GeoDataFrame KML vazio ou sem coluna 'UNIDADE_normalized'.")
         return None
 
-    # Calcular centroides em UTM
+    # Calcular centroides em UTM (já está em EPSG:32722)
     gdf_kml["Longitude_Unidade"] = gdf_kml.geometry.centroid.x
     gdf_kml["Latitude_Unidade"] = gdf_kml.geometry.centroid.y
+    # Converter para EPSG:4326 para o mapa
     gdf_kml_4326 = gdf_kml.to_crs("EPSG:4326")
     gdf_kml["Longitude_Unidade_4326"] = gdf_kml_4326.geometry.centroid.x
     gdf_kml["Latitude_Unidade_4326"] = gdf_kml_4326.geometry.centroid.y
 
+    # Resto do código permanece inalterado
     df_analistas.columns = [normalize_str(col) for col in df_analistas.columns]
     expected_cols = ["GESTOR", "ESPECIALISTA", "CIDADE_BASE", "UNIDADE", "COORDENADAS_CIDADE"]
     missing_cols = [col for col in expected_cols if col not in df_analistas.columns]
@@ -688,13 +690,12 @@ with tab3:
 
             unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
             if not unidade_row.empty:
-                # Calcular centroide em UTM
+                # Calcular centroide em UTM (já está em EPSG:32722)
                 centroid_utm = unidade_row.geometry.centroid.iloc[0]
                 # Converter para EPSG:4326 para o mapa
                 unidade_row_4326 = unidade_row.to_crs("EPSG:4326")
-                centroid_4326 = unidade_row_4326.geometry.centroid.iloc[0]
-                uni_lat = centroid_4326.y
-                uni_lon = centroid_4326.x
+                uni_lat = unidade_row_4326.geometry.centroid.y.iloc[0]
+                uni_lon = unidade_row_4326.geometry.centroid.x.iloc[0]
 
                 df_cidades["DIST_METROS"] = df_cidades.apply(
                     lambda row: haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]), axis=1
