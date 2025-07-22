@@ -124,7 +124,6 @@ st.markdown("""
    </style>
 """, unsafe_allow_html=True)
 
-# Funções auxiliares
 def extrair_dados_kml(kml_bytes):
     try:
         if not kml_bytes:
@@ -197,6 +196,8 @@ def extrair_dados_kml(kml_bytes):
             **info["props"]
         } for unidade, info in dados.items()]
         gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
+        # Depuração: exibir os valores de UNIDADE_normalized
+        st.write("Valores de UNIDADE_normalized no KML:", gdf["UNIDADE_normalized"].tolist())
         return gdf
     except Exception as e:
         st.markdown(
