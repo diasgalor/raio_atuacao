@@ -319,8 +319,13 @@ def migrar(kml_file, xlsx_file):
     )
     if df_merged.empty:
         st.warning("Nenhuma correspondência encontrada entre Excel e KML. Verifique se os nomes em 'UNIDADE' (Excel) correspondem a 'NOME_FAZ' (KML).")
-        st.write("Exemplo de UNIDADE_normalized no Excel:", df_analistas["UNIDADE_normalized"].head().tolist())
-        st.write("Exemplo de UNIDADE_normalized no KML:", gdf_kml["UNIDADE_normalized"].head().tolist())
+        st.write("UNIDADE_normalized no Excel:", df_analistas["UNIDADE_normalized"].unique().tolist())
+    st.write("UNIDADE_normalized no KML:", gdf_kml["UNIDADE_normalized"].unique().tolist())
+    df_merged = pd.merge(df_analistas, gdf_kml, on="UNIDADE_normalized", how="inner")
+    if df_merged.empty:
+        st.error("Merge vazio! Verifique correspondência entre UNIDADE (Excel) e NOME_FAZ (KML).")
+        st.write("Exemplo Excel:", df_analistas[["UNIDADE", "UNIDADE_normalized"]].head().to_dict())
+        st.write("Exemplo KML:", gdf_kml[["NOME_FAZ", "UNIDADE_normalized"]].head().to_dict())
         conn.close()
         return df_analistas, gdf_kml, "Erro na migração: Nenhuma correspondência encontrada."
 
