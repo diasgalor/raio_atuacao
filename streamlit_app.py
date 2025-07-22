@@ -526,198 +526,332 @@ else:
 
 # Análise de Cidade Mais Próxima
 st.markdown("---")
-st.header("🏙️ Análise Avançada de Cidade Mais Próxima da Unidade (Fazenda)")
+import streamlit as st
+import sqlite3
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Polygon
+import xml.etree.ElementTree as ET
+from unidecode import unidecode
+import json
+from shapely.geometry import shape
+import math
+import folium
+from streamlit_folium import st_folium
+from thefuzz import fuzz
 
-show_import = st.sidebar.checkbox("👁️ Exibir barra de importação (GeoJSON cidades)", value=True)
-geojson_file = None
-if show_import:
-    st.sidebar.markdown("### (Opcional) Cidade mais próxima")
-    geojson_file = st.sidebar.file_uploader("🌎 Upload Cidades GeoJSON", type=["geojson"])
+# Funções auxiliares do script original
+def extrair_dados_kml(kml_bytes):
+    tree = ET.fromstring(kml_bytes.decode('utf-8'))
+    ns = {'kml': 'http://www.opengis.net/kml/2.2'}
+    dados = []
+    for placemark in tree.findall('.//kml:Placemark', ns):
+        nome_fazenda = placemark.find('kml:name', ns).text
+        coords_text = placemark.find('.//kml:coordinates', ns).text.strip()
+        coords = [tuple(map(float, c.split(','))) for c in coords_text.split()]
+        polygon = Polygon([(c[0], c[1]) for c in coords])
+        dados.append({'NOME_FAZ': nome_fazenda, 'geometry': polygon})
+    return gpd.GeoDataFrame(dados, crs="EPSG:4326")
 
-if kml_file and xlsx_file and geojson_file and 'df_analistas' in globals():
-    try:
-        cidades_data = json.load(geojson_file)
-        cidades_lista = []
-        for feat in cidades_data["features"]:
-            prop = feat["properties"]
-            cidade_nome = prop.get("nome") or prop.get("NOME") or prop.get("cidade") or prop.get("City") or list(prop.values())[0]
-            geom = shape(feat["geometry"]).centroid
-            lon, lat = geom.x, geom.y
-            cidades_lista.append({
-                "CIDADE": normalize_str(cidade_nome),
-                "LAT": lat,
-                "LON": lon,
-                "raw_nome": cidade_nome
-            })
-        df_cidades = pd.DataFrame(cidades_lista)
-        
-        unidades_opcoes = sorted(set(df_analistas["UNIDADE"].unique()))
-        unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda) para análise:", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
-        unidade_norm = normalize_str(unidade_sel)
+def normalize_str(s):
+    return unidecode(str(s).strip().upper()) if pd.notna(s) else ""
 
-        unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
-        if not unidade_row.empty:
-            uni_lat = unidade_row['Latitude'].iloc[0]
-            uni_lon = unidade_row['Longitude'].iloc[0]
+def criar_banco():
+    conn = sqlite3.connect('mapa_dados.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS especialistas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE, gestor TEXT, cidade_base TEXT,
+        latitude_base REAL, longitude_base REAL
+    )''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS fazendas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome_fazenda TEXT, especialista_id INTEGER,
+        geometria_json TEXT, latitude_centroide REAL, longitude_centroide REAL,
+        FOREIGN KEY (especialista_id) REFERENCES especialistas (id)
+    )''')
+    conn.commit()
+    conn.close()
+    return "Banco de dados 'mapa_dados.db' e tabelas criadas com sucesso!"
 
-            def haversine_m(lon1, lat1, lon2, lat2):
-                R = 6371000
-                lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
-                dlon = lon2 - lon1
-                dlat = lat2 - lat1
-                a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
-                c = 2*math.asin(math.sqrt(a))
-                return R * c
+def migrar(kml_file, xlsx_file):
+    conn = sqlite3.connect('mapa_dados.db')
+    cursor = conn.cursor()
 
-            df_cidades["DIST_METROS"] = df_cidades.apply(lambda row: haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]), axis=1)
-            cidade_mais_proxima = df_cidades.loc[df_cidades["DIST_METROS"].idxmin()]
-            cidade_nome = cidade_mais_proxima["raw_nome"]
-            cidade_norm = cidade_mais_proxima["CIDADE"]
-            cidade_dist_km = cidade_mais_proxima["DIST_METROS"] / 1000
+    # Processar Excel
+    df_analistas = pd.read_excel(xlsx_file)
+    df_analistas.columns = [normalize_str(col) for col in df_analistas.columns]
+    coords = df_analistas["COORDENADAS_CIDADE"].astype(str).str.replace("'", "").str.split(",", expand=True)
+    df_analistas["LAT_BASE"] = pd.to_numeric(coords[0], errors="coerce")
+    df_analistas["LON_BASE"] = pd.to_numeric(coords[1], errors="coerce")
+    df_analistas["UNIDADE_normalized"] = df_analistas["UNIDADE"].apply(normalize_str)
 
-            st.markdown(
-                f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
-                f'🏠 <span style="color:#22577A"><b>Cidade mais próxima:</b></span> <b>{cidade_nome}</b> '
-                f'<span style="color:#4CAF50">({cidade_dist_km:.1f} km da unidade)</span>'
-                f'</div>',
-                unsafe_allow_html=True
+    especialistas_unicos = df_analistas.drop_duplicates(subset=['ESPECIALISTA'])
+    for _, row in especialistas_unicos.iterrows():
+        cursor.execute(
+            "INSERT OR IGNORE INTO especialistas (nome, gestor, cidade_base, latitude_base, longitude_base) VALUES (?, ?, ?, ?, ?)",
+            (normalize_str(row['ESPECIALISTA']), normalize_str(row['GESTOR']), normalize_str(row['CIDADE_BASE']), row['LAT_BASE'], row['LON_BASE'])
+        )
+    conn.commit()
+
+    # Processar KML
+    kml_content = kml_file.read()
+    gdf_kml = extrair_dados_kml(kml_content)
+    gdf_kml["UNIDADE_normalized"] = gdf_kml["NOME_FAZ"].apply(normalize_str)
+
+    # Juntar e inserir fazendas
+    df_merged = pd.merge(
+        df_analistas, gdf_kml,
+        on="UNIDADE_normalized", how="inner"
+    )
+    for _, row in df_merged.iterrows():
+        cursor.execute("SELECT id FROM especialistas WHERE nome = ?", (normalize_str(row['ESPECIALISTA']),))
+        result = cursor.fetchone()
+        if result:
+            especialista_id = result[0]
+            geometria_geojson = row['geometry'].to_json()
+            cursor.execute(
+                "INSERT INTO fazendas (nome_fazenda, especialista_id, geometria_json, latitude_centroide, longitude_centroide) VALUES (?, ?, ?, ?, ?)",
+                (row['NOME_FAZ'], especialista_id, geometria_geojson, row['geometry'].centroid.y, row['geometry'].centroid.x)
             )
+    conn.commit()
+    conn.close()
+    return df_analistas, gdf_kml, f"{len(especialistas_unicos)} especialistas e {len(df_merged)} fazendas inseridos!"
 
-            # Mapa interativo
-            m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, tiles="cartodbpositron")
-            folium.Marker(
-                location=[uni_lat, uni_lon],
-                popup=f"<b>Unidade</b>: {unidade_sel.title()}",
-                icon=folium.Icon(color="green", icon="home", prefix="fa")
-            ).add_to(m)
-            folium.Marker(
-                location=[cidade_mais_proxima["LAT"], cidade_mais_proxima["LON"]],
-                popup=f"<b>Cidade mais próxima</b>: {cidade_nome}",
-                icon=folium.Icon(color="blue", icon="building", prefix="fa")
-            ).add_to(m)
-            folium.PolyLine([(uni_lat, uni_lon), (cidade_mais_proxima["LAT"], cidade_mais_proxima["LON"])],
-                          color="#b5ead7", weight=3, dash_array="5,10").add_to(m)
-            st_folium(m, width=None, height=350, use_container_width=True)
+def haversine_m(lon1, lat1, lon2, lat2):
+    R = 6371000
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2*math.asin(math.sqrt(a))
+    return R * c
 
-            # Lógica de análise de analistas
-            def find_matching_city(cidade_base, cidade_norm, threshold=90):
-                return fuzz.ratio(cidade_base, cidade_norm) >= threshold
+# Interface Streamlit
+st.set_page_config(page_title="Análise de Fazendas e Cidades", layout="wide")
+st.title("🌾 Sistema de Análise de Fazendas e Cidades")
 
-            analistas_cidade = df_analistas[
-                df_analistas["CIDADE_BASE"].apply(lambda x: find_matching_city(x, cidade_norm))
-            ]
-            analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
-            analistas_moram_atendem = analistas_cidade[analistas_cidade["UNIDADE_normalized"] == unidade_norm]
-            analistas_moram_atendem = analistas_moram_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
-            analistas_moram_nao_atendem = analistas_cidade[~analistas_cidade["UNIDADE_normalized"].isin([unidade_norm])]
-            analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
+# Abas
+tab1, tab2 = st.tabs(["📤 Upload e Migração", "🏙️ Análise de Cidades"])
 
-            # Seção 1: Analistas que moram na cidade e atendem a fazenda
-            st.markdown(
-                f'#### 🟢 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
-                unsafe_allow_html=True
-            )
-            if not analistas_moram_atendem.empty:
-                exibe = []
-                for idx, row in analistas_moram_atendem.iterrows():
-                    dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]) / 1000
-                    n_fazendas = df_analistas[(df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]) & 
-                                            (df_analistas["ESPECIALISTA"] == row["ESPECIALISTA"])]["UNIDADE"].nunique()
-                    n_analistas_cidade = df_analistas[df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]]["ESPECIALISTA"].nunique()
-                    cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
-                    icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
-                    exibe.append({
-                        "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
-                        "Gestor": row["GESTOR"].title(),
-                        "Cidade Base": row["CIDADE_BASE"].title(),
-                        "Dist. Cidade-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>",
-                        "Nº Fazendas Atende": n_fazendas,
-                        "Analistas Mesma Cidade": n_analistas_cidade
-                    })
-                st.write(pd.DataFrame(exibe).to_html(escape=False, index=False), unsafe_allow_html=True)
-                st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
-            else:
-                st.markdown(
-                    f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
-                    f'❌ Nenhum analista mora na cidade mais próxima ({cidade_nome}) e atende esta fazenda.'
-                    f'</div>',
-                    unsafe_allow_html=True
+# Aba 1: Upload e Migração
+with tab1:
+    st.header("📤 Upload de Arquivos e Migração de Dados")
+    kml_file = st.file_uploader("📍 Carregar arquivo KML", type=["kml"], key="kml_upload")
+    xlsx_file = st.file_uploader("📊 Carregar arquivo Excel", type=["xlsx"], key="xlsx_upload")
+    
+    if st.button("🚀 Criar Banco e Migrar Dados"):
+        if kml_file and xlsx_file:
+            with st.spinner("Criando banco e migrando dados..."):
+                try:
+                    st.success(criar_banco())
+                    df_analistas, gdf_kml, msg = migrar(kml_file, xlsx_file)
+                    st.session_state['df_analistas'] = df_analistas
+                    st.session_state['gdf_kml'] = gdf_kml
+                    st.success(msg)
+                except Exception as e:
+                    st.error(f"Erro ao migrar dados: {str(e)}")
+        else:
+            st.error("Por favor, faça upload dos arquivos KML e Excel.")
+
+# Aba 2: Análise de Cidades
+with tab2:
+    st.header("🏙️ Análise das 3 Cidades Mais Próximas da Unidade")
+    show_import = st.checkbox("👁️ Exibir upload de GeoJSON", value=True)
+    geojson_file = None
+    if show_import:
+        geojson_file = st.file_uploader("🌎 Carregar GeoJSON de Cidades", type=["geojson"], key="geojson_upload")
+    
+    if 'df_analistas' in st.session_state and 'gdf_kml' in st.session_state and geojson_file:
+        df_analistas = st.session_state['df_analistas']
+        gdf_kml = st.session_state['gdf_kml']
+        try:
+            cidades_data = json.load(geojson_file)
+            cidades_lista = []
+            for feat in cidades_data["features"]:
+                prop = feat["properties"]
+                cidade_nome = prop.get("nome") or prop.get("NOME") or prop.get("cidade") or prop.get("City") or list(prop.values())[0]
+                geom = shape(feat["geometry"]).centroid
+                lon, lat = geom.x, geom.y
+                cidades_lista.append({
+                    "CIDADE": normalize_str(cidade_nome),
+                    "LAT": lat,
+                    "LON": lon,
+                    "raw_nome": cidade_nome
+                })
+            df_cidades = pd.DataFrame(cidades_lista)
+            
+            unidades_opcoes = sorted(set(df_analistas["UNIDADE"].unique()))
+            unidade_sel = st.selectbox("🏡 Selecione a unidade (fazenda):", options=unidades_opcoes, key="unidade_cidade_mais_proxima")
+            unidade_norm = normalize_str(unidade_sel)
+
+            unidade_row = gdf_kml[gdf_kml['UNIDADE_normalized'] == unidade_norm]
+            if not unidade_row.empty:
+                uni_lat = unidade_row['geometry'].centroid.y.iloc[0]
+                uni_lon = unidade_row['geometry'].centroid.x.iloc[0]
+
+                # Calcular distâncias para todas as cidades
+                df_cidades["DIST_METROS"] = df_cidades.apply(
+                    lambda row: haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]), axis=1
                 )
+                top_3_cidades = df_cidades.nsmallest(3, "DIST_METROS")
 
-            # Seção 2: Analistas que moram na cidade e NÃO atendem a fazenda
-            st.markdown(
-                f'#### 🟡 Analistas que moram na cidade mais próxima e <span style="color:#22577A"><b>não atendem</b></span> esta fazenda:',
-                unsafe_allow_html=True
-            )
-            if not analistas_moram_nao_atendem.empty:
-                exibe = []
-                for idx, row in analistas_moram_nao_atendem.iterrows():
-                    dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]) / 1000
-                    n_fazendas = df_analistas[(df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]) & 
-                                            (df_analistas["ESPECIALISTA"] == row["ESPECIALISTA"])]["UNIDADE"].nunique()
-                    n_analistas_cidade = df_analistas[df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]]["ESPECIALISTA"].nunique()
-                    cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
-                    icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
-                    exibe.append({
-                        "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
-                        "Gestor": row["GESTOR"].title(),
-                        "Cidade Base": row["CIDADE_BASE"].title(),
-                        "Dist. Cidade-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>",
-                        "Nº Fazendas Atende": n_fazendas,
-                        "Analistas Mesma Cidade": n_analistas_cidade
-                    })
-                st.markdown("**💡 Sugestão Logística**: Estes analistas poderiam ser realocados para atender esta fazenda, reduzindo custos de deslocamento.")
-                st.write(pd.DataFrame(exibe).to_html(escape=False, index=False), unsafe_allow_html=True)
-                st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
-            else:
-                st.markdown(
-                    f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
-                    f'✅ Nenhum analista mora na cidade mais próxima ({cidade_nome}) sem atender esta fazenda.'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-
-            # Seção 3: Caso não haja analistas na cidade mais próxima
-            if analistas_moram_atendem.empty:
-                st.markdown(
-                    f'<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
-                    f'🔎 <b>Nenhum analista mora na cidade mais próxima ({cidade_nome}) e atende esta fazenda.</b> Veja abaixo as cidades base dos especialistas que atendem esta fazenda:'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-                if not analistas_atendem.empty:
-                    exibe_cb = []
-                    for idx, row in analistas_atendem.drop_duplicates(subset=["CIDADE_BASE", "ESPECIALISTA"]).iterrows():
-                        dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON"], row["LAT"]) / 1000
-                        cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
-                        icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
-                        exibe_cb.append({
-                            "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
-                            "Cidade Base": row["CIDADE_BASE"].title(),
-                            "Dist. CidadeBase-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>"
-                        })
-                    st.write(pd.DataFrame(exibe_cb).to_html(escape=False, index=False), unsafe_allow_html=True)
-                    st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
-                else:
+                # Mapa interativo
+                m = folium.Map(location=[uni_lat, uni_lon], zoom_start=7, tiles="cartodbpositron")
+                folium.Marker(
+                    location=[uni_lat, uni_lon],
+                    popup=f"<b>Unidade</b>: {unidade_sel.title()}",
+                    icon=folium.Icon(color="green", icon="home", prefix="fa")
+                ).add_to(m)
+                
+                # Exibir as 3 cidades mais próximas
+                st.markdown("### 🏙️ Top 3 Cidades Mais Próximas")
+                for idx, cidade in top_3_cidades.iterrows():
+                    cidade_nome = cidade["raw_nome"]
+                    cidade_norm = cidade["CIDADE"]
+                    cidade_dist_km = cidade["DIST_METROS"] / 1000
                     st.markdown(
-                        f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                        f'❌ Nenhum analista atende esta fazenda.'
+                        f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
+                        f'🏠 <span style="color:#22577A"><b>Cidade {idx+1}:</b></span> <b>{cidade_nome}</b> '
+                        f'<span style="color:#4CAF50">({cidade_dist_km:.1f} km da unidade)</span>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
-        else:
+                    folium.Marker(
+                        location=[cidade["LAT"], cidade["LON"]],
+                        popup=f"<b>Cidade {idx+1}</b>: {cidade_nome} ({cidade_dist_km:.1f} km)",
+                        icon=folium.Icon(color="blue", icon="building", prefix="fa")
+                    ).add_to(m)
+                    folium.PolyLine(
+                        [(uni_lat, uni_lon), (cidade["LAT"], cidade["LON"])],
+                        color="#b5ead7", weight=3, dash_array="5,10"
+                    ).add_to(m)
+
+                    # Análise de analistas para esta cidade
+                    def find_matching_city(cidade_base, cidade_norm, threshold=90):
+                        return fuzz.ratio(cidade_base, cidade_norm) >= threshold
+
+                    analistas_cidade = df_analistas[
+                        df_analistas["CIDADE_BASE"].apply(lambda x: find_matching_city(x, cidade_norm))
+                    ]
+                    analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
+                    analistas_moram_atendem = analistas_cidade[analistas_cidade["UNIDADE_normalized"] == unidade_norm]
+                    analistas_moram_atendem = analistas_moram_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
+                    analistas_moram_nao_atendem = analistas_cidade[~analistas_cidade["UNIDADE_normalized"].isin([unidade_norm])]
+                    analistas_moram_nao_atendem = analistas_moram_nao_atendem.drop_duplicates(subset=["ESPECIALISTA", "GESTOR", "CIDADE_BASE"])
+
+                    # Seção 1: Analistas que moram na cidade e atendem a fazenda
+                    st.markdown(
+                        f'#### 🟢 Analistas que moram em {cidade_nome} e <span style="color:#22577A"><b>atendem</b></span> esta fazenda:',
+                        unsafe_allow_html=True
+                    )
+                    if not analistas_moram_atendem.empty:
+                        exibe = []
+                        for _, row in analistas_moram_atendem.iterrows():
+                            dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON_BASE"], row["LAT_BASE"]) / 1000
+                            n_fazendas = df_analistas[(df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]) & 
+                                                    (df_analistas["ESPECIALISTA"] == row["ESPECIALISTA"])]["UNIDADE"].nunique()
+                            n_analistas_cidade = df_analistas[df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]]["ESPECIALISTA"].nunique()
+                            cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
+                            icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
+                            exibe.append({
+                                "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
+                                "Gestor": row["GESTOR"].title(),
+                                "Cidade Base": row["CIDADE_BASE"].title(),
+                                "Dist. Cidade-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>",
+                                "Nº Fazendas Atende": n_fazendas,
+                                "Analistas Mesma Cidade": n_analistas_cidade
+                            })
+                        st.write(pd.DataFrame(exibe).to_html(escape=False, index=False), unsafe_allow_html=True)
+                        st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
+                    else:
+                        st.markdown(
+                            f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
+                            f'❌ Nenhum analista mora em {cidade_nome} e atende esta fazenda.'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+                    # Seção 2: Analistas que moram na cidade e NÃO atendem a fazenda
+                    st.markdown(
+                        f'#### 🟡 Analistas que moram em {cidade_nome} e <span style="color:#22577A"><b>não atendem</b></span> esta fazenda:',
+                        unsafe_allow_html=True
+                    )
+                    if not analistas_moram_nao_atendem.empty:
+                        exibe = []
+                        for _, row in analistas_moram_nao_atendem.iterrows():
+                            dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON_BASE"], row["LAT_BASE"]) / 1000
+                            n_fazendas = df_analistas[(df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]) & 
+                                                    (df_analistas["ESPECIALISTA"] == row["ESPECIALISTA"])]["UNIDADE"].nunique()
+                            n_analistas_cidade = df_analistas[df_analistas["CIDADE_BASE"] == row["CIDADE_BASE"]]["ESPECIALISTA"].nunique()
+                            cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
+                            icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
+                            exibe.append({
+                                "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
+                                "Gestor": row["GESTOR"].title(),
+                                "Cidade Base": row["CIDADE_BASE"].title(),
+                                "Dist. Cidade-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>",
+                                "Nº Fazendas Atende": n_fazendas,
+                                "Analistas Mesma Cidade": n_analistas_cidade
+                            })
+                        st.markdown("**💡 Sugestão Logística**: Estes analistas poderiam ser realocados para atender esta fazenda, reduzindo custos de deslocamento.")
+                        st.write(pd.DataFrame(exibe).to_html(escape=False, index=False), unsafe_allow_html=True)
+                        st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
+                    else:
+                        st.markdown(
+                            f'<div style="background-color:#e8f5e9;padding:12px;border-radius:8px;border-left:6px solid #4CAF50;">'
+                            f'✅ Nenhum analista mora em {cidade_nome} sem atender esta fazenda.'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+                # Exibir mapa
+                st_folium(m, width=None, height=350, use_container_width=True)
+
+                # Seção 3: Caso não haja analistas nas cidades próximas
+                if all(df_analistas[df_analistas["CIDADE_BASE"].apply(lambda x: find_matching_city(x, cidade["CIDADE"]))].empty for cidade in top_3_cidades.itertuples()):
+                    st.markdown(
+                        f'<div style="background-color:#fff3cd;padding:12px;border-radius:8px;border-left:6px solid #ffca28;">'
+                        f'🔎 <b>Nenhum analista mora nas 3 cidades mais próximas.</b> Veja abaixo as cidades base dos especialistas que atendem esta fazenda:'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    analistas_atendem = df_analistas[df_analistas["UNIDADE_normalized"] == unidade_norm]
+                    if not analistas_atendem.empty:
+                        exibe_cb = []
+                        for _, row in analistas_atendem.drop_duplicates(subset=["CIDADE_BASE", "ESPECIALISTA"]).iterrows():
+                            dist_base_uni = haversine_m(uni_lon, uni_lat, row["LON_BASE"], row["LAT_BASE"]) / 1000
+                            cor_dist = "#4CAF50" if dist_base_uni <= 100 else "#FFC107" if dist_base_uni <= 200 else "#FF5722"
+                            icone = "🟩" if dist_base_uni <= 100 else "🟨" if dist_base_uni <= 200 else "🟥"
+                            exibe_cb.append({
+                                "Especialista": f"{icone} {row['ESPECIALISTA'].title()}",
+                                "Cidade Base": row["CIDADE_BASE"].title(),
+                                "Dist. CidadeBase-Uni": f"<span style='color:{cor_dist}'>{dist_base_uni:.1f} km</span>"
+                            })
+                        st.write(pd.DataFrame(exibe_cb).to_html(escape=False, index=False), unsafe_allow_html=True)
+                        st.caption("🟩 até 100km, 🟨 até 200km, 🟥 acima de 200km")
+                    else:
+                        st.markdown(
+                            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                            f'❌ Nenhum analista atende esta fazenda.'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+            else:
+                st.markdown(
+                    f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                    f'❗ Não foi possível localizar a unidade selecionada no KML.'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        except Exception as e:
             st.markdown(
                 f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-                f'❗ Não foi possível localizar a unidade selecionada no KML.'
+                f'❌ Erro na análise de cidades: {str(e)}'
                 f'</div>',
                 unsafe_allow_html=True
             )
-    except Exception as e:
-        st.markdown(
-            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
-            f'❌ Erro na análise de cidade mais próxima: {str(e)}'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-else:
-    st.info("ℹ️ Para a análise de cidade mais próxima, faça upload dos arquivos KML, Excel e GeoJSON de cidades.")
+    else:
+        st.info("ℹ️ Para a análise de cidades, faça upload dos arquivos KML, Excel e GeoJSON e realize a migração na primeira aba.")
