@@ -648,6 +648,112 @@ def haversine_m(lon1, lat1, lon2, lat2):
         return None
 
 
+```python
+def extrair_dados_kml(kml_bytes):
+    try:
+        if not kml_bytes:
+            st.error("Arquivo KML vazio ou inválido.")
+            print("Erro: Arquivo KML vazio ou inválido.")  # Depuração no terminal
+            return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
+        
+        kml_string = kml_bytes.decode("utf-8")
+        tree = ET.fromstring(kml_string)
+        ns = {"kml": "http://www.opengis.net/kml/2.2"}
+        dados = {}
+        placemarks = tree.findall(".//kml:Placemark", ns)
+        
+        if not placemarks:
+            st.error("Nenhum Placemark encontrado no arquivo KML. Verifique o conteúdo do arquivo.")
+            print("Erro: Nenhum Placemark encontrado no KML.")  # Depuração no terminal
+            return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
+
+        for placemark in placemarks:
+            props = {sd.get("name"): sd.text for sd in placemark.findall(".//kml:SimpleData", ns)}
+            name_elem = placemark.find("kml:name", ns)
+            props["Name"] = name_elem.text if name_elem is not None else "Sem Nome"
+            nome_faz = props.get("NOME_FAZ", props.get("Name", "Unidade Desconhecida"))
+            props["UNIDADE_normalized"] = normalize_str(nome_faz)
+            if not props["UNIDADE_normalized"]:
+                st.warning(f"UNIDADE_normalized vazio para placemark: {nome_faz}. Usando 'UNIDADE_DESCONHECIDA'.")
+                print(f"Aviso: UNIDADE_normalized vazio para placemark: {nome_faz}")  # Depuração no terminal
+                props["UNIDADE_normalized"] = "UNIDADE_DESCONHECIDA"
+            
+            geometry = None
+            coord_tags = {
+                "Polygon": ".//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates",
+                "LineString": ".//kml:LineString/kml:coordinates",
+                "Point": ".//kml:Point/kml:coordinates"
+            }
+            for geom_type, tag in coord_tags.items():
+                elem = placemark.find(tag, ns)
+                if elem is not None:
+                    coords_text = elem.text.strip()
+                    coords = [tuple(map(float, c.split(","))) for c in coords_text.split()]
+                    try:
+                        if geom_type == "Polygon":
+                            geometry = Polygon([(c[0], c[1]) for c in coords])
+                        elif geom_type == "LineString":
+                            geometry = LineString([(c[0], c[1]) for c in coords])
+                        elif geom_type == "Point":
+                            geometry = Point(coords[0])
+                        break
+                    except Exception as geom_e:
+                        st.markdown(
+                            f'<div style="background-color:#f8d7da;padding:12px;border-radius:8px;border-left:6px solid #dc3545;">'
+                            f'⚠️ Erro ao criar geometria para placemark {props.get("Name", "Sem Nome")}: {geom_e}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                        print(f"Erro: Geometria inválida para placemark {props.get('Name', 'Sem Nome')}: {geom_e}")  # Depuração no terminal
+                        continue
+            if geometry:
+                unidade = props["UNIDADE_normalized"]
+                if unidade not in dados:
+                    dados[unidade] = {"geometries": [], "props": {}}
+                dados[unidade]["geometries"].append(geometry)
+                dados[unidade]["props"].update(props)
+
+        if not dados:
+            st.error("Nenhuma geometria válida encontrada no KML.")
+            print("Erro: Nenhuma geometria válida encontrada no KML.")  # Depuração no terminal
+            return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
+
+        gdf_data = [{
+            "Name": unidade,
+            "geometry": unary_union(info["geometries"]),
+            "NOME_FAZ": info["props"].get("NOME_FAZ", info["props"].get("Name", "Unidade Desconhecida")),
+            "UNIDADE_normalized": info["props"].get("UNIDADE_normalized", "Unidade Desconhecida"),
+            **info["props"]
+        } for unidade, info in dados.items()]
+        gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
+        
+        # Verificar se UNIDADE_normalized contém valores válidos
+        if gdf["UNIDADE_normalized"].isna().any() or gdf["UNIDADE_normalized"].eq("").any():
+            st.warning("Alguns valores de UNIDADE_normalized estão vazios ou nulos. Substituindo por 'UNIDADE_DESCONHECIDA'.")
+            print("Aviso: Valores de UNIDADE_normalized vazios ou nulos detectados.")  # Depuração no terminal
+            gdf["UNIDADE_normalized"] = gdf["UNIDADE_normalized"].fillna("UNIDADE_DESCONHECIDA").replace("", "UNIDADE_DESCONHECIDA")
+        
+        # Depuração: exibir os valores de UNIDADE_normalized
+        st.write("Valores de UNIDADE_normalized no KML:", gdf["UNIDADE_normalized"].unique().tolist())
+        print(f"Valores de UNIDADE_normalized no KML: {gdf['UNIDADE_normalized'].unique().tolist()}")  # Depuração no terminal
+        
+        # Reprojetar para UTM dinamicamente com base na longitude média
+        if not gdf.empty:
+            gdf_temp = gdf.to_crs(epsg=3857)  # Reprojetar para Mercator projetado
+            lon_mean = gdf_temp.geometry.centroid.x.mean()  # Calcular longitude média no CRS projetado
+            hemisphere = 'south' if gdf_temp.geometry.centroid.y.mean() < 0 else 'north'
+            utm_zone = int((lon_mean / 111320 + 180) / 6) + 1  # Aproximação para zona UTM
+            utm_crs = f"EPSG:327{utm_zone}" if hemisphere == 'south' else f"EPSG:326{utm_zone}"
+            gdf = gdf.to_crs(utm_crs)
+            st.write(f"Geometrias reprojetadas para CRS: {utm_crs}")
+            print(f"Geometrias reprojetadas para CRS: {utm_crs}")  # Depuração no terminal
+        
+        return gdf
+    except Exception as e:
+        st.error(f'❌ Erro ao processar KML: {str(e)}')
+        print(f"Erro ao processar KML: {str(e)}")  # Depuração no terminal
+        return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
+
 # Aba 3: Análise de Cidades
 with tab3:
     st.markdown("### 🧭 Cidades próximas das fazendas")
@@ -667,22 +773,45 @@ with tab3:
         except Exception as e:
             cidades_gdf = None
             st.warning("⚠️ Nenhum GeoJSON encontrado. Faça o upload do arquivo de cidades.")
+            print(f"Aviso: Falha ao carregar cidades_br.geojson: {str(e)}")  # Depuração no terminal
 
     if 'df_analistas' in st.session_state and 'gdf_kml' in st.session_state and cidades_gdf is not None:
         df_analistas = st.session_state['df_analistas']
         gdf_kml = st.session_state['gdf_kml']
 
         try:
+            # Depuração: Verificar colunas e conteúdo de gdf_kml
+            st.write("**Depuração: Colunas disponíveis em gdf_kml**", gdf_kml.columns.tolist())
+            print(f"Colunas em gdf_kml: {gdf_kml.columns.tolist()}")  # Depuração no terminal
+            st.write("**Depuração: Primeiras linhas de gdf_kml**", gdf_kml[["Name", "NOME_FAZ", "UNIDADE_normalized"]].head().to_dict())
+            print(f"Primeiras linhas de gdf_kml: {gdf_kml[['Name', 'NOME_FAZ', 'UNIDADE_normalized']].head().to_dict()}")  # Depuração no terminal
+
             if 'UNIDADE_normalized' not in gdf_kml.columns:
                 st.error('❌ Coluna "UNIDADE_normalized" não encontrada no KML. Verifique se o arquivo KML contém o campo "NOME_FAZ".')
-                st.write("Colunas disponíveis no gdf_kml:", gdf_kml.columns.tolist())
-                st.write("Conteúdo de gdf_kml:", gdf_kml.head().to_dict())
+                print("Erro: Coluna UNIDADE_normalized não encontrada em gdf_kml.")  # Depuração no terminal
                 st.stop()
+
+            # Depuração: Verificar valores de UNIDADE_normalized
+            st.write("**Depuração: Valores únicos de UNIDADE_normalized em gdf_kml**", gdf_kml["UNIDADE_normalized"].unique().tolist())
+            print(f"Valores únicos de UNIDADE_normalized em gdf_kml: {gdf_kml['UNIDADE_normalized'].unique().tolist()}")  # Depuração no terminal
+
+            # Depuração: Verificar df_analistas
+            st.write("**Depuração: Colunas disponíveis em df_analistas**", df_analistas.columns.tolist())
+            print(f"Colunas em df_analistas: {df_analistas.columns.tolist()}")  # Depuração no terminal
+            if 'UNIDADE_normalized' in df_analistas.columns:
+                st.write("**Depuração: Valores únicos de UNIDADE_normalized em df_analistas**", df_analistas["UNIDADE_normalized"].unique().tolist())
+                print(f"Valores únicos de UNIDADE_normalized em df_analistas: {df_analistas['UNIDADE_normalized'].unique().tolist()}")  # Depuração no terminal
+            else:
+                st.write("**Depuração: Valores únicos de UNIDADE em df_analistas**", df_analistas["UNIDADE"].unique().tolist())
+                print(f"Valores únicos de UNIDADE em df_analistas: {df_analistas['UNIDADE'].unique().tolist()}")  # Depuração no terminal
 
             # Seleção de fazenda
             fazenda_nomes = sorted(set(df_analistas["UNIDADE"].unique()))
             selected_nome_fazenda = st.selectbox("🌾 Selecione uma fazenda", fazenda_nomes, key="fazenda_selector_tab3")
             selected_fazenda_norm = normalize_str(selected_nome_fazenda)
+            st.write(f"**Depuração: Fazenda selecionada (normalizada)**: {selected_fazenda_norm}")
+            print(f"Fazenda selecionada (normalizada): {selected_fazenda_norm}")  # Depuração no terminal
+
             selected_fazenda = gdf_kml[gdf_kml["UNIDADE_normalized"] == selected_fazenda_norm]
 
             if not selected_fazenda.empty:
@@ -692,9 +821,9 @@ with tab3:
                 centroid_4326 = centroid_projected.to_crs("EPSG:4326")
                 fazenda_lat = centroid_4326.y.iloc[0]
                 fazenda_lon = centroid_4326.x.iloc[0]
-                print(f"CRS do gdf_kml: {gdf_kml.crs}")  # Para depuração
-                print(f"CRS do centroid_4326: {centroid_4326.crs}")  # Para depuração
-                print(f"Latitude da fazenda: {fazenda_lat}, Longitude da fazenda: {fazenda_lon}")  # Para depuração
+                print(f"CRS do gdf_kml: {gdf_kml.crs}")  # Depuração no terminal
+                print(f"CRS do centroid_4326: {centroid_4326.crs}")  # Depuração no terminal
+                print(f"Latitude da fazenda: {fazenda_lat}, Longitude da fazenda: {fazenda_lon}")  # Depuração no terminal
 
                 # Reprojetar a geometria da fazenda para EPSG:4326 para exibição no mapa
                 selected_fazenda_4326 = selected_fazenda.to_crs("EPSG:4326")
@@ -711,7 +840,6 @@ with tab3:
                 cidades_proximas = cidades_gdf_4326[cidades_gdf_4326.geometry.centroid.within(buffer_4326)]
 
                 # Especialistas dentro do raio
-                # Converter df_analistas para GeoDataFrame com geometria (LAT_BASE, LON_BASE)
                 especialistas_gdf = gpd.GeoDataFrame(
                     df_analistas,
                     geometry=gpd.points_from_xy(df_analistas["LON_BASE"], df_analistas["LAT_BASE"]),
@@ -823,6 +951,14 @@ with tab3:
                 st.markdown("#### 📊 Tabela de cidades e especialistas")
                 if tabela_dados:
                     df_tabela = pd.DataFrame(tabela_dados)
+                    st.markdown("""
+                    <style>
+                    table { width: 100%; border-collapse: collapse; font-family: 'Arial', sans-serif; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background-color: #f2f2f2; font-weight: bold; }
+                    tr:nth-child(even) { background-color: #f9f9f9; }
+                    </style>
+                    """, unsafe_allow_html=True)
                     st.write(df_tabela[["Fazenda", "Cidade", "Distância (km)", "Especialistas", "Tipo"]].to_html(escape=False, index=False), unsafe_allow_html=True)
                     # Botão para baixar a tabela como CSV
                     csv = df_tabela.to_csv(index=False)
@@ -837,11 +973,13 @@ with tab3:
                     st.info("Nenhuma cidade ou especialista encontrado no raio informado.")
 
             else:
-                st.warning(f"Fazenda '{selected_nome_fazenda}' não encontrada no KML.")
-                st.write("Unidades disponíveis no KML (UNIDADE_normalized):", gdf_kml["UNIDADE_normalized"].unique().tolist())
-                st.write("Primeiras linhas de gdf_kml:", gdf_kml[["Name", "NOME_FAZ", "UNIDADE_normalized"]].head().to_dict())
+                st.error(f"❗ Fazenda '{selected_nome_fazenda}' (normalizada: '{selected_fazenda_norm}') não encontrada no KML.")
+                st.write("**Depuração: Valores únicos de UNIDADE_normalized em gdf_kml**", gdf_kml["UNIDADE_normalized"].unique().tolist())
+                st.write("**Depuração: Primeiras linhas de gdf_kml**", gdf_kml[["Name", "NOME_FAZ", "UNIDADE_normalized"]].head().to_dict())
+                print(f"Erro: Fazenda '{selected_nome_fazenda}' (normalizada: '{selected_fazenda_norm}') não encontrada no KML.")  # Depuração no terminal
 
         except Exception as e:
             st.error(f'❌ Erro na análise de cidades: {str(e)}')
+            print(f"Erro na análise de cidades: {str(e)}")  # Depuração no terminal
     else:
         st.info("ℹ️ Para a análise de cidades, faça upload dos arquivos KML, Excel e GeoJSON e realize a migração na primeira aba.")
