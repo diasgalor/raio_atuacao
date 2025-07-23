@@ -750,8 +750,6 @@ def extrair_dados_kml(kml_bytes):
         st.error(f'❌ Erro ao processar KML: {str(e)}')
         print(f"Erro ao processar KML: {str(e)}")  # Depuração no terminal
         return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
-
-```python
 # Aba 3: Análise de Cidades
 with tab3:
     st.markdown("### 🧭 Cidades próximas das fazendas")
