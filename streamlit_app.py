@@ -751,6 +751,7 @@ def extrair_dados_kml(kml_bytes):
         print(f"Erro ao processar KML: {str(e)}")  # Depuração no terminal
         return gpd.GeoDataFrame(columns=['Name', 'geometry', 'UNIDADE_normalized'], crs="EPSG:4326")
 
+```python
 # Aba 3: Análise de Cidades
 with tab3:
     st.markdown("### 🧭 Cidades próximas das fazendas")
@@ -795,9 +796,9 @@ with tab3:
             # Depuração: Verificar df_analistas
             st.write("**Depuração: Colunas disponíveis em df_analistas**", df_analistas.columns.tolist())
             print(f"Colunas em df_analistas: {df_analistas.columns.tolist()}")  # Depuração no terminal
-            if 'UNIDADE_normalized' in df_analistas.columns:
-                st.write("**Depuração: Valores únicos de UNIDADE_normalized em df_analistas**", df_analistas["UNIDADE_normalized"].unique().tolist())
-                print(f"Valores únicos de UNIDADE_normalized em df_analistas: {df_analistas['UNIDADE_normalized'].unique().tolist()}")  # Depuração no terminal
+            if 'UNIDADE_NORMALIZED' in df_analistas.columns:
+                st.write("**Depuração: Valores únicos de UNIDADE_NORMALIZED em df_analistas**", df_analistas["UNIDADE_NORMALIZED"].unique().tolist())
+                print(f"Valores únicos de UNIDADE_NORMALIZED em df_analistas: {df_analistas['UNIDADE_NORMALIZED'].unique().tolist()}")  # Depuração no terminal
             else:
                 st.write("**Depuração: Valores únicos de UNIDADE em df_analistas**", df_analistas["UNIDADE"].unique().tolist())
                 print(f"Valores únicos de UNIDADE em df_analistas: {df_analistas['UNIDADE'].unique().tolist()}")  # Depuração no terminal
@@ -810,170 +811,182 @@ with tab3:
             print(f"Fazenda selecionada (normalizada): {selected_fazenda_norm}")  # Depuração no terminal
 
             selected_fazenda = gdf_kml[gdf_kml["UNIDADE_normalized"] == selected_fazenda_norm]
-
-            if not selected_fazenda.empty:
-                # Calcular o centroide no CRS projetado (UTM, herdado de gdf_kml)
-                fazenda_geom = selected_fazenda.geometry.iloc[0]
-                centroid_projected = selected_fazenda['geometry'].centroid
-                centroid_4326 = centroid_projected.to_crs("EPSG:4326")
-                fazenda_lat = centroid_4326.y.iloc[0]
-                fazenda_lon = centroid_4326.x.iloc[0]
-                print(f"CRS do gdf_kml: {gdf_kml.crs}")  # Depuração no terminal
-                print(f"CRS do centroid_4326: {centroid_4326.crs}")  # Depuração no terminal
-                print(f"Latitude da fazenda: {fazenda_lat}, Longitude da fazenda: {fazenda_lon}")  # Depuração no terminal
-
-                # Reprojetar a geometria da fazenda para EPSG:4326 para exibição no mapa
-                selected_fazenda_4326 = selected_fazenda.to_crs("EPSG:4326")
-
-                # Raio de busca
-                buffer_km = st.slider("📏 Raio de busca (km)", 10, 100, 50, step=5, key="buffer_km_tab3")
-
-                # Buffer da fazenda no CRS projetado
-                buffer_projected = fazenda_geom.buffer(buffer_km * 1000)  # Buffer em metros
-                buffer_4326 = gpd.GeoSeries([buffer_projected], crs=gdf_kml.crs).to_crs("EPSG:4326").iloc[0]
-
-                # Cidades dentro do raio
-                cidades_gdf_4326 = cidades_gdf.to_crs("EPSG:4326")
-                cidades_proximas = cidades_gdf_4326[cidades_gdf_4326.geometry.centroid.within(buffer_4326)]
-
-                # Especialistas dentro do raio
-                especialistas_gdf = gpd.GeoDataFrame(
-                    df_analistas,
-                    geometry=gpd.points_from_xy(df_analistas["LON_BASE"], df_analistas["LAT_BASE"]),
-                    crs="EPSG:4326"
-                )
-                especialistas_proximos = especialistas_gdf[
-                    (especialistas_gdf["UNIDADE_normalized"] == selected_fazenda_norm) &
-                    (especialistas_gdf.geometry.within(buffer_4326))
-                ]
-
-                # Criar mapa
-                m = folium.Map(location=[fazenda_lat, fazenda_lon], zoom_start=9, tiles="cartodbpositron")
-
-                # Adicionar limite da fazenda
-                folium.GeoJson(
-                    data=selected_fazenda_4326.geometry.__geo_interface__,
-                    style_function=lambda x: {"color": "green", "fillOpacity": 0.15, "weight": 3},
-                    tooltip=f"Fazenda: {selected_nome_fazenda.title()}",
-                    name="Limite Fazenda"
-                ).add_to(m)
-
-                # Adicionar buffer
-                folium.GeoJson(
-                    data=buffer_4326.__geo_interface__,
-                    style_function=lambda x: {"color": "blue", "fillOpacity": 0.1, "weight": 2},
-                    tooltip=f"{buffer_km} km de raio",
-                    name="Raio de Busca"
-                ).add_to(m)
-
-                # Criar tabela para armazenar informações
-                tabela_dados = []
-
-                # Adicionar cidades próximas com ícones
-                for idx, cidade in cidades_proximas.iterrows():
-                    cidade_nome = cidade["nome_municipio"]
-                    cidade_uf = cidade["nome_uf"]
-                    centro = cidade.geometry.centroid
-                    distancia_km = haversine_m(fazenda_lon, fazenda_lat, centro.x, centro.y) / 1000
-
-                    # Ícone: estrela para a cidade mais próxima, círculo para outras
-                    icon = "star" if idx == cidades_proximas.index[0] else "circle"
-                    popup_html = f"""
-                    <b>Cidade:</b> {cidade_nome} ({cidade_uf})<br>
-                    <b>Distância:</b> {distancia_km:.1f} km
-                    """
-                    folium.Marker(
-                        [centro.y, centro.x],
-                        popup=folium.Popup(popup_html, max_width=300),
-                        icon=folium.Icon(color="blue", icon=icon, prefix="fa"),
-                        tooltip=f"{cidade_nome} ({cidade_uf})"
-                    ).add_to(m)
-
-                    # Adicionar à tabela
-                    tabela_dados.append({
-                        "Fazenda": selected_nome_fazenda.title(),
-                        "Cidade": f"{cidade_nome} ({cidade_uf})",
-                        "Distância (km)": f"{distancia_km:.1f}",
-                        "Especialistas": "Nenhum",
-                        "Tipo": "Cidade Próxima"
-                    })
-
-                # Adicionar especialistas
-                for _, especialista in especialistas_proximos.iterrows():
-                    especialista_nome = especialista["ESPECIALISTA"].title()
-                    gestor_nome = especialista["GESTOR"].title()
-                    cidade_base = especialista["CIDADE_BASE"].title()
-                    centro = especialista.geometry
-                    distancia_km = haversine_m(fazenda_lon, fazenda_lat, centro.x, centro.y) / 1000
-
-                    # Ícone: vermelho se distância > 200 km, roxo caso contrário
-                    icon_color = "red" if distancia_km > 200 else "purple"
-                    popup_html = f"""
-                    <b>Especialista:</b> {especialista_nome}<br>
-                    <b>Gestor:</b> {gestor_nome}<br>
-                    <b>Cidade Base:</b> {cidade_base}<br>
-                    <b>Distância:</b> {distancia_km:.1f} km
-                    """
-                    folium.Marker(
-                        [centro.y, centro.x],
-                        popup=folium.Popup(popup_html, max_width=300),
-                        icon=folium.Icon(color=icon_color, icon="user", prefix="fa"),
-                        tooltip=f"{especialista_nome} ({cidade_base})"
-                    ).add_to(m)
-
-                    # Adicionar à tabela
-                    tabela_dados.append({
-                        "Fazenda": selected_nome_fazenda.title(),
-                        "Cidade": cidade_base,
-                        "Distância (km)": f"{distancia_km:.1f}",
-                        "Especialistas": f"{especialista_nome} (Gestor: {gestor_nome})",
-                        "Tipo": "Cidade Base do Especialista"
-                    })
-
-                # Ajustar visualização do mapa
-                bounds = [[min(fazenda_lat, cidades_proximas.geometry.centroid.y.min() if not cidades_proximas.empty else fazenda_lat,
-                               especialistas_proximos.geometry.y.min() if not especialistas_proximos.empty else fazenda_lat),
-                           min(fazenda_lon, cidades_proximas.geometry.centroid.x.min() if not cidades_proximas.empty else fazenda_lon,
-                               especialistas_proximos.geometry.x.min() if not especialistas_proximos.empty else fazenda_lon)],
-                          [max(fazenda_lat, cidades_proximas.geometry.centroid.y.max() if not cidades_proximas.empty else fazenda_lat,
-                               especialistas_proximos.geometry.y.max() if not especialistas_proximos.empty else fazenda_lat),
-                           max(fazenda_lon, cidades_proximas.geometry.centroid.x.max() if not cidades_proximas.empty else fazenda_lon,
-                               especialistas_proximos.geometry.x.max() if not especialistas_proximos.empty else fazenda_lon)]]
-                m.fit_bounds(bounds)
-
-                st.markdown("#### 🗺️ Mapa interativo")
-                st_folium(m, width=800, height=500)
-
-                # Exibir tabela
-                st.markdown("#### 📊 Tabela de cidades e especialistas")
-                if tabela_dados:
-                    df_tabela = pd.DataFrame(tabela_dados)
-                    st.markdown("""
-                    <style>
-                    table { width: 100%; border-collapse: collapse; font-family: 'Arial', sans-serif; }
-                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                    th { background-color: #f2f2f2; font-weight: bold; }
-                    tr:nth-child(even) { background-color: #f9f9f9; }
-                    </style>
-                    """, unsafe_allow_html=True)
-                    st.write(df_tabela[["Fazenda", "Cidade", "Distância (km)", "Especialistas", "Tipo"]].to_html(escape=False, index=False), unsafe_allow_html=True)
-                    # Botão para baixar a tabela como CSV
-                    csv = df_tabela.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Baixar tabela como CSV",
-                        data=csv,
-                        file_name=f"tabela_{selected_fazenda_norm.lower()}.csv",
-                        mime="text/csv",
-                        key="download_tabela_cidades_tab3"
-                    )
-                else:
-                    st.info("Nenhuma cidade ou especialista encontrado no raio informado.")
-
-            else:
+            if selected_fazenda.empty:
                 st.error(f"❗ Fazenda '{selected_nome_fazenda}' (normalizada: '{selected_fazenda_norm}') não encontrada no KML.")
                 st.write("**Depuração: Valores únicos de UNIDADE_normalized em gdf_kml**", gdf_kml["UNIDADE_normalized"].unique().tolist())
                 st.write("**Depuração: Primeiras linhas de gdf_kml**", gdf_kml[["Name", "NOME_FAZ", "UNIDADE_normalized"]].head().to_dict())
                 print(f"Erro: Fazenda '{selected_nome_fazenda}' (normalizada: '{selected_fazenda_norm}') não encontrada no KML.")  # Depuração no terminal
+                st.stop()
+
+            # Depuração: Confirmar fazenda selecionada
+            st.write(f"**Depuração: Fazenda selecionada encontrada** (UNIDADE_normalized: {selected_fazenda['UNIDADE_normalized'].iloc[0]})")
+            print(f"Fazenda selecionada encontrada: {selected_fazenda['UNIDADE_normalized'].iloc[0]}")  # Depuração no terminal
+
+            # Calcular o centroide no CRS projetado (UTM, herdado de gdf_kml)
+            fazenda_geom = selected_fazenda.geometry.iloc[0]
+            centroid_projected = selected_fazenda['geometry'].centroid
+            centroid_4326 = centroid_projected.to_crs("EPSG:4326")
+            fazenda_lat = centroid_4326.y.iloc[0]
+            fazenda_lon = centroid_4326.x.iloc[0]
+            print(f"CRS do gdf_kml: {gdf_kml.crs}")  # Depuração no terminal
+            print(f"CRS do centroid_4326: {centroid_4326.crs}")  # Depuração no terminal
+            print(f"Latitude da fazenda: {fazenda_lat}, Longitude da fazenda: {fazenda_lon}")  # Depuração no terminal
+
+            # Reprojetar a geometria da fazenda para EPSG:4326 para exibição no mapa
+            selected_fazenda_4326 = selected_fazenda.to_crs("EPSG:4326")
+
+            # Raio de busca
+            buffer_km = st.slider("📏 Raio de busca (km)", 10, 100, 50, step=5, key="buffer_km_tab3")
+
+            # Buffer da fazenda no CRS projetado
+            buffer_projected = fazenda_geom.buffer(buffer_km * 1000)  # Buffer em metros
+            buffer_4326 = gpd.GeoSeries([buffer_projected], crs=gdf_kml.crs).to_crs("EPSG:4326").iloc[0]
+
+            # Cidades dentro do raio
+            cidades_gdf_4326 = cidades_gdf.to_crs("EPSG:4326")
+            cidades_proximas = cidades_gdf_4326[cidades_gdf_4326.geometry.centroid.within(buffer_4326)]
+            st.write(f"**Depuração: Número de cidades próximas encontradas**: {len(cidades_proximas)}")
+            print(f"Número de cidades próximas encontradas: {len(cidades_proximas)}")  # Depuração no terminal
+
+            # Especialistas dentro do raio
+            if 'LON_BASE' not in df_analistas.columns or 'LAT_BASE' not in df_analistas.columns:
+                st.error("❌ Colunas LAT_BASE ou LON_BASE ausentes em df_analistas.")
+                print("Erro: Colunas LAT_BASE ou LON_BASE ausentes em df_analistas.")  # Depuração no terminal
+                st.stop()
+
+            especialistas_gdf = gpd.GeoDataFrame(
+                df_analistas,
+                geometry=gpd.points_from_xy(df_analistas["LON_BASE"], df_analistas["LAT_BASE"]),
+                crs="EPSG:4326"
+            )
+            especialistas_proximos = especialistas_gdf[
+                (especialistas_gdf["UNIDADE_NORMALIZED"] == selected_fazenda_norm) &
+                (especialistas_gdf.geometry.within(buffer_4326))
+            ]
+            st.write(f"**Depuração: Número de especialistas próximos encontrados**: {len(especialistas_proximos)}")
+            print(f"Número de especialistas próximos encontrados: {len(especialistas_proximos)}")  # Depuração no terminal
+
+            # Criar mapa
+            m = folium.Map(location=[fazenda_lat, fazenda_lon], zoom_start=9, tiles="cartodbpositron")
+
+            # Adicionar limite da fazenda
+            folium.GeoJson(
+                data=selected_fazenda_4326.geometry.__geo_interface__,
+                style_function=lambda x: {"color": "green", "fillOpacity": 0.15, "weight": 3},
+                tooltip=f"Fazenda: {selected_nome_fazenda.title()}",
+                name="Limite Fazenda"
+            ).add_to(m)
+
+            # Adicionar buffer
+            folium.GeoJson(
+                data=buffer_4326.__geo_interface__,
+                style_function=lambda x: {"color": "blue", "fillOpacity": 0.1, "weight": 2},
+                tooltip=f"{buffer_km} km de raio",
+                name="Raio de Busca"
+            ).add_to(m)
+
+            # Criar tabela para armazenar informações
+            tabela_dados = []
+
+            # Adicionar cidades próximas com ícones
+            for idx, cidade in cidades_proximas.iterrows():
+                cidade_nome = cidade["nome_municipio"]
+                cidade_uf = cidade["nome_uf"]
+                centro = cidade.geometry.centroid
+                distancia_km = haversine_m(fazenda_lon, fazenda_lat, centro.x, centro.y) / 1000
+
+                # Ícone: estrela para a cidade mais próxima, círculo para outras
+                icon = "star" if idx == cidades_proximas.index[0] else "circle"
+                popup_html = f"""
+                <b>Cidade:</b> {cidade_nome} ({cidade_uf})<br>
+                <b>Distância:</b> {distancia_km:.1f} km
+                """
+                folium.Marker(
+                    [centro.y, centro.x],
+                    popup=folium.Popup(popup_html, max_width=300),
+                    icon=folium.Icon(color="blue", icon=icon, prefix="fa"),
+                    tooltip=f"{cidade_nome} ({cidade_uf})"
+                ).add_to(m)
+
+                # Adicionar à tabela
+                tabela_dados.append({
+                    "Fazenda": selected_nome_fazenda.title(),
+                    "Cidade": f"{cidade_nome} ({cidade_uf})",
+                    "Distância (km)": f"{distancia_km:.1f}",
+                    "Especialistas": "Nenhum",
+                    "Tipo": "Cidade Próxima"
+                })
+
+            # Adicionar especialistas
+            for _, especialista in especialistas_proximos.iterrows():
+                especialista_nome = especialista["ESPECIALISTA"].title()
+                gestor_nome = especialista["GESTOR"].title()
+                cidade_base = especialista["CIDADE_BASE"].title()
+                centro = especialista.geometry
+                distancia_km = haversine_m(fazenda_lon, fazenda_lat, centro.x, centro.y) / 1000
+
+                # Ícone: vermelho se distância > 200 km, roxo caso contrário
+                icon_color = "red" if distancia_km > 200 else "purple"
+                popup_html = f"""
+                <b>Especialista:</b> {especialista_nome}<br>
+                <b>Gestor:</b> {gestor_nome}<br>
+                <b>Cidade Base:</b> {cidade_base}<br>
+                <b>Distância:</b> {distancia_km:.1f} km
+                """
+                folium.Marker(
+                    [centro.y, centro.x],
+                    popup=folium.Popup(popup_html, max_width=300),
+                    icon=folium.Icon(color=icon_color, icon="user", prefix="fa"),
+                    tooltip=f"{especialista_nome} ({cidade_base})"
+                ).add_to(m)
+
+                # Adicionar à tabela
+                tabela_dados.append({
+                    "Fazenda": selected_nome_fazenda.title(),
+                    "Cidade": cidade_base,
+                    "Distância (km)": f"{distancia_km:.1f}",
+                    "Especialistas": f"{especialista_nome} (Gestor: {gestor_nome})",
+                    "Tipo": "Cidade Base do Especialista"
+                })
+
+            # Ajustar visualização do mapa
+            bounds = [[min(fazenda_lat, cidades_proximas.geometry.centroid.y.min() if not cidades_proximas.empty else fazenda_lat,
+                           especialistas_proximos.geometry.y.min() if not especialistas_proximos.empty else fazenda_lat),
+                       min(fazenda_lon, cidades_proximas.geometry.centroid.x.min() if not cidades_proximas.empty else fazenda_lon,
+                           especialistas_proximos.geometry.x.min() if not especialistas_proximos.empty else fazenda_lon)],
+                      [max(fazenda_lat, cidades_proximas.geometry.centroid.y.max() if not cidades_proximas.empty else fazenda_lat,
+                           especialistas_proximos.geometry.y.max() if not especialistas_proximos.empty else fazenda_lat),
+                       max(fazenda_lon, cidades_proximas.geometry.centroid.x.max() if not cidades_proximas.empty else fazenda_lon,
+                           especialistas_proximos.geometry.x.max() if not especialistas_proximos.empty else fazenda_lon)]]
+            m.fit_bounds(bounds)
+
+            st.markdown("#### 🗺️ Mapa interativo")
+            st_folium(m, width=800, height=500)
+
+            # Exibir tabela
+            st.markdown("#### 📊 Tabela de cidades e especialistas")
+            if tabela_dados:
+                df_tabela = pd.DataFrame(tabela_dados)
+                st.markdown("""
+                <style>
+                table { width: 100%; border-collapse: collapse; font-family: 'Arial', sans-serif; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; font-weight: bold; }
+                tr:nth-child(even) { background-color: #f9f9f9; }
+                </style>
+                """, unsafe_allow_html=True)
+                st.write(df_tabela[["Fazenda", "Cidade", "Distância (km)", "Especialistas", "Tipo"]].to_html(escape=False, index=False), unsafe_allow_html=True)
+                # Botão para baixar a tabela como CSV
+                csv = df_tabela.to_csv(index=False)
+                st.download_button(
+                    label="📥 Baixar tabela como CSV",
+                    data=csv,
+                    file_name=f"tabela_{selected_fazenda_norm.lower()}.csv",
+                    mime="text/csv",
+                    key="download_tabela_cidades_tab3"
+                )
+            else:
+                st.info("Nenhuma cidade ou especialista encontrado no raio informado.")
 
         except Exception as e:
             st.error(f'❌ Erro na análise de cidades: {str(e)}')
