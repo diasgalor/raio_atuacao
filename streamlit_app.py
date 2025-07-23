@@ -646,9 +646,6 @@ def haversine_m(lon1, lat1, lon2, lat2):
         return R * c
     except Exception:
         return None
-
-
-```python
 def extrair_dados_kml(kml_bytes):
     try:
         if not kml_bytes:
