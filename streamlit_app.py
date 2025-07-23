@@ -627,7 +627,6 @@ with tab2:
     else:
         st.info("ℹ️ Para visualizar o mapa, faça upload dos arquivos KML e Excel e realize a migração na primeira aba.")
 
-# Aba 3: Análise de Cidades
 def normalize_str(s):
     try:
         return unidecode(str(s).strip().upper()) if pd.notna(s) else ""
