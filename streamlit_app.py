@@ -650,90 +650,94 @@ def haversine_m(lon1, lat1, lon2, lat2):
 
 # Aba 3: Análise de Cidades
 with tab3:
-    st.subheader("🌆 Cidades próximas e especialistas")
+    st.markdown("### 🧭 Cidades próximas das fazendas")
 
-    # Evita erro de widget duplicado
-    show_import = st.checkbox("👁️ Exibir upload de GeoJSON", value=True, key="checkbox_geojson_tab3")
-
-    # Upload do GeoJSON de cidades (opcional)
-    geojson_file = st.file_uploader("🌎 Carregar GeoJSON de Cidades", type=["geojson"], key="geojson_upload_tab3")
-
-    if geojson_file:
-        cidades_gdf = gpd.read_file(geojson_file)
+    # Upload do GeoJSON de cidades (caso não esteja no sistema)
+    show_import = st.checkbox("👁️ Exibir upload de GeoJSON", value=True, key="show_import_tab3")
+    if show_import:
+        geojson_file = st.file_uploader("🌎 Carregar GeoJSON de Cidades", type=["geojson"], key="geojson_upload_tab3")
+        if geojson_file is not None:
+            cidades_gdf = gpd.read_file(geojson_file)
+        else:
+            cidades_gdf = None
     else:
-        cidades_gdf = gpd.read_file("data/cidades_br.geojson")  # ou caminho padrão
+        try:
+            cidades_gdf = gpd.read_file("data/cidades_br.geojson")
+        except Exception as e:
+            cidades_gdf = None
+            st.warning("⚠️ Nenhum GeoJSON encontrado. Faça o upload do arquivo de cidades.")
 
-    # Filtrando apenas cidades próximas da fazenda selecionada
-    fazenda_geom = selected_fazenda.geometry
-    cidades_gdf["DISTANCIA_KM"] = cidades_gdf.geometry.centroid.distance(fazenda_geom.centroid) * 111  # aprox. km
+    if cidades_gdf is not None:
+        # Seleção de fazenda
+        fazenda_nomes = sorted(fazendas_gdf['nome_fazenda'].unique())
+        selected_nome_fazenda = st.selectbox("🌾 Selecione uma fazenda", fazenda_nomes, key="fazenda_selector_tab3")
+        selected_fazenda = fazendas_gdf[fazendas_gdf["nome_fazenda"] == selected_nome_fazenda]
 
-    top_2_cidades = cidades_gdf.nsmallest(2, "DISTANCIA_KM").copy()
-    top_2_cidades["raw_nome"] = top_2_cidades["NOME"]
-    top_2_cidades["CIDADE"] = top_2_cidades["NOME"].apply(lambda x: normalize_str(x))
+        if not selected_fazenda.empty:
+            fazenda_geom = selected_fazenda.geometry.iloc[0]
+            buffer_km = st.slider("📏 Raio de busca (km)", 10, 100, 50, step=5)
 
-    # Cria mapa
-    m = folium.Map(location=[fazenda_geom.centroid.y, fazenda_geom.centroid.x], zoom_start=10)
+            # Buffer da fazenda
+            buffer = fazenda_geom.buffer(buffer_km * 1000)  # metros
 
-    # Adiciona a fazenda no mapa
-    folium.GeoJson(fazenda_geom, name="Fazenda", style_function=lambda x: {
-        'fillColor': 'green', 'color': 'green', 'weight': 2, 'fillOpacity': 0.2
-    }).add_to(m)
+            # Cidades dentro do raio
+            cidades_proximas = cidades_gdf[cidades_gdf.geometry.centroid.within(buffer)]
 
-    # Adiciona cidades próximas
-    for _, cidade in top_2_cidades.iterrows():
-        cidade_nome = cidade["raw_nome"].title()
-        cidade_geom = cidade.geometry
-        cidade_centroid = cidade_geom.centroid
+            # Especialistas nas cidades
+            especialistas_proximos = especialistas_gdf[
+                especialistas_gdf.geometry.within(buffer)
+            ]
 
-        # Popup resumido
-        popup_html = f"""
-        <b>Cidade:</b> {cidade_nome}<br>
-        <b>Distância:</b> {cidade['DISTANCIA_KM']:.1f} km
-        """
+            # Mapa
+            m = folium.Map(location=[fazenda_geom.centroid.y, fazenda_geom.centroid.x], zoom_start=9)
+            folium.GeoJson(fazenda_geom, tooltip="Fazenda").add_to(m)
+            folium.GeoJson(buffer, tooltip=f"{buffer_km} km de raio", style_function=lambda x: {
+                "color": "blue", "fillOpacity": 0.1
+            }).add_to(m)
 
-        folium.GeoJson(cidade_geom, name=cidade_nome, style_function=lambda x: {
-            'fillColor': 'blue', 'color': 'blue', 'weight': 1.5, 'fillOpacity': 0.15
-        }).add_to(m)
+            # Ícones das cidades
+            for _, row in cidades_proximas.iterrows():
+                centro = row.geometry.centroid
+                folium.Marker(
+                    [centro.y, centro.x],
+                    icon=folium.Icon(color="green", icon="info-sign"),
+                    tooltip=f"{row['nome_municipio']} - {row['nome_uf']}"
+                ).add_to(m)
 
-        folium.Marker(
-            location=[cidade_centroid.y, cidade_centroid.x],
-            tooltip=cidade_nome,
-            popup=folium.Popup(popup_html, max_width=300),
-            icon=folium.Icon(color="blue", icon="info-sign")
-        ).add_to(m)
+            # Especialistas
+            for _, row in especialistas_proximos.iterrows():
+                centro = row.geometry.centroid
+                folium.Marker(
+                    [centro.y, centro.x],
+                    icon=folium.Icon(color="red", icon="user"),
+                    tooltip=f"Especialista: {row['nome']}"
+                ).add_to(m)
 
-    # Mostra mapa
-    st_data = st_folium(m, width=1000, height=500)
+            st.markdown("#### 🗺️ Mapa interativo")
+            st_data = st_folium(m, width=800, height=500)
 
-    # --- TABELA DE CRUZAMENTO ---
-    st.subheader("📊 Cruzamento: Cidades, Especialistas e Fazendas")
+            # Tabela
+            st.markdown("#### 📊 Tabela de cidades e especialistas")
+            if not cidades_proximas.empty:
+                tabela_cidades = cidades_proximas[['nome_municipio', 'nome_uf']].copy()
+                tabela_cidades.rename(columns={'nome_municipio': 'Cidade', 'nome_uf': 'UF'}, inplace=True)
 
-    cruzamento = []
+                especialistas_na_area = especialistas_proximos.copy()
+                especialistas_na_area['Cidade'] = especialistas_na_area.apply(
+                    lambda row: cidades_gdf[cidades_gdf.geometry.contains(row.geometry)].iloc[0]['nome_municipio']
+                    if not cidades_gdf[cidades_gdf.geometry.contains(row.geometry)].empty else "Fora do município",
+                    axis=1
+                )
 
-    for _, cidade in top_2_cidades.iterrows():
-        cidade_nome = cidade["raw_nome"].title()
-        cidade_norm = cidade["CIDADE"]
+                tabela_final = pd.merge(
+                    tabela_cidades,
+                    especialistas_na_area[['nome', 'Cidade']],
+                    on='Cidade',
+                    how='left'
+                ).drop_duplicates()
 
-        especialistas_na_cidade = df_analistas[
-            df_analistas["CIDADE_BASE"].apply(lambda x: fuzz.ratio(normalize_str(x), cidade_norm) >= 90)
-        ]
-
-        for _, esp in especialistas_na_cidade.iterrows():
-            cruzamento.append({
-                "Cidade": cidade_nome,
-                "Especialista": esp["ESPECIALISTA"].title(),
-                "Gestor": esp["GESTOR"].title(),
-                "Unidade Atendida": esp["UNIDADE"].title(),
-                "Mora na Cidade": "Sim",
-                "Dist. Cidade-Uni (km)": round(haversine_m(
-                    cidade.geometry.centroid.x, cidade.geometry.centroid.y,
-                    esp["LON_BASE"], esp["LAT_BASE"]
-                ) / 1000, 1)
-            })
-
-    df_cruzamento = pd.DataFrame(cruzamento)
-
-    if df_cruzamento.empty:
-        st.warning("⚠️ Nenhum especialista encontrado nas cidades próximas.")
-    else:
-        st.dataframe(df_cruzamento, use_container_width=True)
+                st.dataframe(tabela_final)
+            else:
+                st.info("Nenhuma cidade encontrada no raio informado.")
+        else:
+            st.warning("Fazenda selecionada não encontrada.")
