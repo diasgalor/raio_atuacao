@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -9,21 +8,47 @@ import xml.etree.ElementTree as ET
 from shapely.geometry import Polygon, LineString, Point, MultiPolygon
 from shapely.ops import unary_union
 import requests
-import sqlite3
-import logging
-from math import radians, sin, cos, sqrt, atan2
+import time
+import math
+import json
+from shapely.geometry import shape
+from fuzzywuzzy import fuzz
 from streamlit_folium import st_folium
-
-# Configuração do logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import sqlite3
 
 # Configuração da página
 st.set_page_config(page_title="Raio de Atuação dos Analistas", layout="wide")
 
 # Carregar CSS externo
-with open("styles.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+try:
+    with open("styles.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+except FileNotFoundError:
+    st.warning("Arquivo styles.css não encontrado. Usando estilo padrão.")
+    # Definir um CSS mínimo para evitar que o layout quebre
+    st.markdown("""
+        <style>
+        .stApp {
+            background-color: #f7f8fa;
+            font-family: Arial, sans-serif;
+        }
+        .stSelectbox, .stSlider {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 5px;
+        }
+        .stButton>button {
+            background: #007bff;
+            color: white;
+            border-radius: 5px;
+            padding: 8px 16px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+# ... O resto do código permanece exatamente como está ...
+# (A partir de `def extrair_dados_kml(kml_bytes):` até o final)
 
 # Mapeamento de códigos IBGE para UFs
 UF_MAP = {
