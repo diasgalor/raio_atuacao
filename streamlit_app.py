@@ -755,6 +755,14 @@ with tab3:
     st.markdown("### 🧭 Cidades próximas das fazendas")
     st.markdown("Selecione uma fazenda e um raio de busca para visualizar cidades e especialistas próximos.")
 
+    # Mapeamento de códigos de estado (IBGE) para UFs
+    uf_map = {
+        "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP", "17": "TO",
+        "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL",
+        "28": "SE", "29": "BA", "31": "MG", "32": "ES", "33": "RJ", "35": "SP", "41": "PR",
+        "42": "SC", "43": "RS", "50": "MS", "51": "MT", "52": "GO", "53": "DF"
+    }
+
     # Upload do GeoJSON de cidades (caso não esteja no sistema)
     show_import = st.checkbox("👁️ Exibir upload de GeoJSON", value=True, key="show_import_tab3")
     if show_import:
@@ -776,6 +784,10 @@ with tab3:
         gdf_kml = st.session_state['gdf_kml']
 
         try:
+            # Depuração: Verificar colunas de cidades_gdf
+            st.write("**Depuração: Colunas disponíveis em cidades_gdf**", cidades_gdf.columns.tolist())
+            print(f"Colunas em cidades_gdf: {cidades_gdf.columns.tolist()}")  # Depuração no terminal
+
             # Depuração: Verificar colunas e conteúdo de gdf_kml
             st.write("**Depuração: Colunas disponíveis em gdf_kml**", gdf_kml.columns.tolist())
             print(f"Colunas em gdf_kml: {gdf_kml.columns.tolist()}")  # Depuração no terminal
@@ -888,8 +900,11 @@ with tab3:
 
             # Adicionar cidades próximas com ícones
             for idx, cidade in cidades_proximas.iterrows():
-                cidade_nome = cidade["nome_municipio"]
-                cidade_uf = cidade["nome_uf"]
+                # Acessar nome da cidade
+                cidade_nome = cidade.get("nome", cidade.get("NOME", cidade.get("municipio", "Desconhecida")))
+                # Derivar UF do geocodigo
+                geocodigo = str(cidade.get("geocodigo", ""))
+                cidade_uf = uf_map.get(geocodigo[:2], "Desconhecida") if geocodigo else "Desconhecida"
                 centro = cidade.geometry.centroid
                 distancia_km = haversine_m(fazenda_lon, fazenda_lat, centro.x, centro.y) / 1000
 
