@@ -1,0 +1,65 @@
+html, body, .stApp {
+    background-color: #f7f8fa;
+    font-family: 'Inter', 'Arial', sans-serif !important;
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    box-sizing: border-box;
+}
+.stSelectbox, .stMultiSelect, .stTextInput, .stNumberInput {
+    background: #fff;
+    border: 1.5px solid #dbeafe !important;
+    border-radius: 8px !important;
+    padding: 8px !important;
+    font-size: 14px !important;
+    box-shadow: 0 2px 6px rgba(93, 188, 252, 0.07);
+}
+.stExpander {
+    background-color: #f7f7fc !important;
+    border: 1.5px solid #dbeafe !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 12px rgba(93, 188, 252, 0.08);
+}
+.metric-card {
+    background: linear-gradient(135deg, #f8fafc 60%, #dbeafe 100%);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(93, 188, 252, 0.08);
+    border: 1.2px solid #b6e0fe;
+    text-align: center;
+}
+.metric-title {
+    font-size: 14px;
+    color: #82a1b7;
+}
+.metric-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #22577A;
+}
+.stButton>button {
+    background: linear-gradient(90deg, #b5ead7 0, #bae1ff 100%);
+    color: #22577A;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+}
+.stButton>button:hover {
+    background: linear-gradient(90deg, #dbeafe 0, #ffd6e0 100%);
+}
+.stDataFrame {
+    border-radius: 10px !important;
+    border: 1.5px solid #dbeafe !important;
+}
+@media screen and (max-width: 768px) {
+    .stApp { padding: 10px !important; }
+    .stSelectbox, .stMultiSelect, .stTextInput, .stNumberInput {
+        font-size: 12px !important;
+        padding: 6px !important;
+    }
+    .metric-card { padding: 8px !important; }
+    .metric-title { font-size: 12px; }
+    .metric-value { font-size: 16px; }
+}
